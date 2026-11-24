@@ -54,7 +54,8 @@ def simular(n=None, semilla=None, tasa_base=None, umbral_medio=None,
 
     # --- Origen de la cohorte: sintetica (Montecarlo 1) o real (UCI) ---
     if origen == "uci":
-        cohorte = datos_reales.cargar_cohorte_uci(n=n, solo_cerrados=True)
+        cohorte = datos_reales.cargar_cohorte_uci(
+            n=n, solo_cerrados=True, semilla=semilla)
         n = len(cohorte)
     else:
         cohorte = generador.generar_cohorte(n=n, semilla=semilla)
@@ -208,4 +209,127 @@ def _resumir(estudiantes, validos):
                                 for d in config.DIMENSIONES},
         "problemas_por_dimension": problemas_dim,
         "probabilidades": probabilidades,
+    }
+
+
+# Valor b0 calibrado de la simulacion de referencia (n=500, semilla=42, tasa=0.09)
+# cuando se evalua un estudiante aislado sin una simulacion previa cargada.
+B0_REFERENCIA_DEFECTO = -4.94753435254097
+
+
+def evaluar_estudiante(registro, b0=None, umbral_medio=None, umbral_alto=None,
+                       k_montecarlo=None, semilla=None):
+    """Evalua un unico estudiante con la cadena oficial Paso 1 -> 2 -> 3.
+
+    Elimina la necesidad de duplicar formulas, topes o validaciones en JS:
+    devuelve exactamente la misma estructura que un elemento de 'estudiantes'
+    en simular(), incluyendo el intervalo de incertidumbre P5-P95.
+    """
+    b0_uso = B0_REFERENCIA_DEFECTO if b0 is None else b0
+    u_medio = config.UMBRAL_MEDIO if umbral_medio is None else umbral_medio
+    u_alto = config.UMBRAL_ALTO if umbral_alto is None else umbral_alto
+    k = config.K_MONTECARLO if k_montecarlo is None else k_montecarlo
+    sem = config.SEMILLA_POR_DEFECTO if semilla is None else semilla
+
+    parametros_uso = {
+        "b0_calibrado": b0_uso,
+        "umbral_medio": u_medio,
+        "umbral_alto": u_alto,
+        "umbral_problema": config.UMBRAL_PROBLEMA,
+        "k_montecarlo": k,
+        "semilla": sem,
+        "coeficientes": dict(config.COEFICIENTES),
+    }
+
+    veredicto = validacion.validar(registro)
+    if veredicto["decision"] != "valido":
+        return {
+            "valido": False,
+            "motivo_revision": veredicto["motivo"],
+            "campo_revision": veredicto["campo"],
+            "mensaje_revision": veredicto["mensaje"],
+            "parametros": parametros_uso,
+            "resultado": None,
+        }
+
+    s = riesgo.subpuntajes(registro)
+    contribs = riesgo.contribuciones(s)
+    z = riesgo.combinacion_lineal(s, b0_uso)
+    p = riesgo.probabilidad(s, b0_uso)
+    niv = riesgo.nivel(p, u_medio, u_alto)
+    probs = riesgo.problemas(s)
+    factor = riesgo.factor_principal(contribs)
+
+    rng_mc = random.Random(sem + DESFASE_SEMILLA_INCERTIDUMBRE)
+    muestras = incertidumbre.muestrear_coeficientes(rng_mc, k)
+    p5, p95 = incertidumbre.intervalo(s, b0_uso, muestras)
+    plan = intervencion.decidir(niv, probs, factor)
+
+    return {
+        "valido": True,
+        "motivo_revision": None,
+        "campo_revision": None,
+        "mensaje_revision": "",
+        "parametros": parametros_uso,
+        "resultado": {
+            "subpuntajes": s,
+            "contribuciones": contribs,
+            "logit": z,
+            "p": p,
+            "p5": p5,
+            "p95": p95,
+            "nivel": niv,
+            "factor_principal": factor,
+            "problemas": probs,
+            "requiere_intervencion": plan["requiere_intervencion"],
+            "intervenciones": plan["intervenciones"],
+        },
+    }
+
+
+def configuracion_publica():
+    """Metadatos del contrato y parametros del modelo para el frontend."""
+    return {
+        "dimensiones": list(config.DIMENSIONES),
+        "campos_por_dimension": {
+            d: list(campos) for d, campos in config.CAMPOS_POR_DIMENSION.items()
+        },
+        "campos_obligatorios": list(config.CAMPOS_OBLIGATORIOS),
+        "campos_enteros": list(config.CAMPOS_ENTEROS),
+        "campos_decimales": list(config.CAMPOS_DECIMALES),
+        "campos_booleanos": list(config.CAMPOS_BOOLEANOS),
+        "rangos": {k: list(v) for k, v in config.RANGOS.items()},
+        "coeficientes": dict(config.COEFICIENTES),
+        "pesos": {
+            "academica": dict(config.PESOS_ACADEMICA),
+            "financiera": dict(config.PESOS_FINANCIERA),
+            "laboral": dict(config.PESOS_LABORAL),
+            "personal": dict(config.PESOS_PERSONAL),
+        },
+        "saturaciones": {
+            "materias_perdidas": config.PERDIDAS_SATURACION,
+            "saldo_pendiente_cop": config.SALDO_SATURACION,
+            "ingreso_hogar_smmlv": config.INGRESO_SATURACION,
+            "horas_trabajo_semana": config.HORAS_SATURACION,
+            "tiempo_desplazamiento_min": config.DESPLAZAMIENTO_SATURACION,
+            "personas_a_cargo": config.PERSONAS_SATURACION,
+        },
+        "por_defecto": {
+            "n": config.N_POR_DEFECTO,
+            "semilla": config.SEMILLA_POR_DEFECTO,
+            "tasa_base": config.TASA_BASE_SEMESTRAL,
+            "umbral_medio": config.UMBRAL_MEDIO,
+            "umbral_alto": config.UMBRAL_ALTO,
+            "umbral_problema": config.UMBRAL_PROBLEMA,
+            "k_montecarlo": config.K_MONTECARLO,
+            "b0_referencia": B0_REFERENCIA_DEFECTO,
+        },
+        "intervenciones": {
+            dim: {
+                "tipo": ficha["tipo"],
+                "nombre": ficha["nombre"],
+                "acciones": list(ficha["acciones"]),
+            }
+            for dim, ficha in config.INTERVENCIONES.items()
+        },
     }

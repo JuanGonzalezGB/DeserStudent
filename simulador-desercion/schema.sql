@@ -41,7 +41,9 @@ CREATE TABLE IF NOT EXISTS estudiantes (
     valido           INTEGER NOT NULL,     -- 1 / 0
     motivo_revision  TEXT,                 -- NULL si es valido
     campo_revision   TEXT,
+    mensaje_revision TEXT,                 -- explicacion legible del Paso 1
     error_inyectado  TEXT,                 -- tipo de error metido a proposito
+    desenlace_real   TEXT,                 -- 'Dropout' / 'Graduate' en UCI; NULL en sintetica
     FOREIGN KEY (simulacion_id) REFERENCES simulaciones (id) ON DELETE CASCADE
 );
 

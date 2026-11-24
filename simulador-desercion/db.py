@@ -28,11 +28,17 @@ RUTA_POR_DEFECTO = os.environ.get(
 
 # Lista blanca de columnas por las que se permite ordenar.
 ORDEN_PERMITIDO = {
-    "p": "r.p", "nivel": "r.nivel", "codigo": "e.codigo",
-    "s_academico": "r.s_academico", "s_financiero": "r.s_financiero",
-    "s_laboral": "r.s_laboral", "s_personal": "r.s_personal",
+    "p": "r.p",
+    "nivel": ("(CASE r.nivel WHEN 'alto' THEN 3 "
+              "WHEN 'medio' THEN 2 WHEN 'bajo' THEN 1 ELSE 0 END)"),
+    "codigo": "e.codigo",
+    "s_academico": "r.s_academico",
+    "s_financiero": "r.s_financiero",
+    "s_laboral": "r.s_laboral",
+    "s_personal": "r.s_personal",
 }
 DIMENSIONES_VALIDAS = ("academica", "financiera", "laboral", "personal")
+DESENLACES_VALIDOS = ("Dropout", "Graduate", "Enrolled")
 
 
 # ------------------------------------------------------------ conexion ----
@@ -46,19 +52,30 @@ def conectar(ruta=None):
     carpeta = os.path.dirname(destino)
     if carpeta:
         os.makedirs(carpeta, exist_ok=True)
-    con = sqlite3.connect(destino)
+    con = sqlite3.connect(destino, timeout=15.0)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
+    con.execute("PRAGMA busy_timeout = 15000")
     return con
 
 
 def inicializar(ruta=None):
-    """Crea las tablas si no existen. Es idempotente."""
+    """Crea las tablas si no existen y migra columnas nuevas de forma segura."""
     with open(RUTA_SCHEMA, "r", encoding="utf-8") as f:
         schema = f.read()
     con = conectar(ruta)
     try:
         con.executescript(schema)
+        columnas = {
+            fila["name"]
+            for fila in con.execute("PRAGMA table_info(estudiantes)").fetchall()
+        }
+        if "mensaje_revision" not in columnas:
+            con.execute(
+                "ALTER TABLE estudiantes ADD COLUMN mensaje_revision TEXT")
+        if "desenlace_real" not in columnas:
+            con.execute(
+                "ALTER TABLE estudiantes ADD COLUMN desenlace_real TEXT")
         con.commit()
     finally:
         con.close()
@@ -99,37 +116,46 @@ def guardar_simulacion(simulacion, ruta=None, fecha=None):
              json.dumps(simulacion["validacion_modelo"], ensure_ascii=False)))
         simulacion_id = cur.lastrowid
 
+        filas_resultados = []
         for est in simulacion["estudiantes"]:
+            mensaje_rev = est.get("mensaje_revision") or None
+            desenlace = est.get("desenlace_real")
             cur.execute(
                 """INSERT INTO estudiantes
                      (simulacion_id, codigo, datos_json, valido,
-                      motivo_revision, campo_revision, error_inyectado)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                      motivo_revision, campo_revision, mensaje_revision,
+                      error_inyectado, desenlace_real)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (simulacion_id, est["codigo"],
                  json.dumps(est["datos"], ensure_ascii=False),
                  1 if est["valido"] else 0,
                  est["motivo_revision"], est["campo_revision"],
-                 est["error_inyectado"]))
+                 mensaje_rev, est["error_inyectado"], desenlace))
             estudiante_id = cur.lastrowid
 
             res = est["resultado"]
             if res is None:
                 continue        # invalido: no recibe probabilidad, por contrato
             s = res["subpuntajes"]
-            cur.execute(
+            filas_resultados.append((
+                estudiante_id, s["academica"], s["financiera"], s["laboral"],
+                s["personal"], res["p"], res["p5"], res["p95"], res["nivel"],
+                res["factor_principal"],
+                json.dumps(res["problemas"], ensure_ascii=False),
+                1 if res["requiere_intervencion"] else 0,
+                json.dumps(res["intervenciones"], ensure_ascii=False),
+                json.dumps(res["contribuciones"], ensure_ascii=False),
+            ))
+
+        if filas_resultados:
+            cur.executemany(
                 """INSERT INTO resultados
                      (estudiante_id, s_academico, s_financiero, s_laboral,
                       s_personal, p, p5, p95, nivel, factor_principal,
                       problemas_json, requiere_intervencion,
                       intervenciones_json, contribuciones_json)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (estudiante_id, s["academica"], s["financiera"], s["laboral"],
-                 s["personal"], res["p"], res["p5"], res["p95"], res["nivel"],
-                 res["factor_principal"],
-                 json.dumps(res["problemas"], ensure_ascii=False),
-                 1 if res["requiere_intervencion"] else 0,
-                 json.dumps(res["intervenciones"], ensure_ascii=False),
-                 json.dumps(res["contribuciones"], ensure_ascii=False)))
+                filas_resultados)
 
         con.commit()
         return simulacion_id
@@ -191,19 +217,9 @@ def obtener_simulacion(simulacion_id, ruta=None):
         con.close()
 
 
-def listar_estudiantes(simulacion_id, nivel=None, intervencion=None,
-                       dimension=None, solo_revision=None, orden="p",
-                       descendente=True, ruta=None):
-    """Estudiantes de una simulacion, con los filtros de la pagina.
-
-    nivel          -> "bajo" | "medio" | "alto"
-    intervencion   -> True / False
-    dimension      -> la dimension aparece entre los problemas del estudiante
-    solo_revision  -> True devuelve unicamente los que esperan revision humana
-
-    Los invalidos aparecen con resultado None: la pagina los muestra en la
-    tabla con su motivo, pero sin probabilidad.
-    """
+def _construir_filtro_estudiantes(simulacion_id, nivel=None, intervencion=None,
+                                  dimension=None, solo_revision=None,
+                                  desenlace=None, buscar=None):
     condiciones = ["e.simulacion_id = ?"]
     valores = [simulacion_id]
 
@@ -221,27 +237,91 @@ def listar_estudiantes(simulacion_id, nivel=None, intervencion=None,
         valores.append('%"' + dimension + '"%')
     if solo_revision:
         condiciones.append("e.valido = 0")
+    if desenlace:
+        if desenlace not in DESENLACES_VALIDOS:
+            raise ValueError("desenlace no valido: %r" % (desenlace,))
+        condiciones.append("e.desenlace_real = ?")
+        valores.append(desenlace)
+    if buscar:
+        termino = str(buscar).strip()
+        if termino:
+            condiciones.append("LOWER(e.codigo) LIKE ?")
+            valores.append("%" + termino.lower() + "%")
+
+    return " AND ".join(condiciones), valores
+
+
+def consultar_estudiantes(simulacion_id, nivel=None, intervencion=None,
+                          dimension=None, solo_revision=None, desenlace=None,
+                          buscar=None, orden="p", descendente=True,
+                          limite=None, offset=0, ruta=None):
+    """Devuelve (total_filtrado, lista_estudiantes) aplicando filtros y pagina."""
+    where_sql, valores = _construir_filtro_estudiantes(
+        simulacion_id, nivel=nivel, intervencion=intervencion,
+        dimension=dimension, solo_revision=solo_revision,
+        desenlace=desenlace, buscar=buscar)
 
     columna = ORDEN_PERMITIDO.get(orden, "r.p")
     sentido = "DESC" if descendente else "ASC"
+    prefijo_nulos = "" if columna == "e.codigo" else "(r.p IS NULL) ASC, "
 
-    sql = ("""SELECT e.id, e.codigo, e.datos_json, e.valido,
-                     e.motivo_revision, e.campo_revision, e.error_inyectado,
-                     r.s_academico, r.s_financiero, r.s_laboral, r.s_personal,
-                     r.p, r.p5, r.p95, r.nivel, r.factor_principal,
-                     r.problemas_json, r.requiere_intervencion,
-                     r.intervenciones_json, r.contribuciones_json
-                FROM estudiantes e
-                LEFT JOIN resultados r ON r.estudiante_id = e.id
-               WHERE """ + " AND ".join(condiciones) +
-           " ORDER BY " + columna + " " + sentido + ", e.id ASC")
+    sql_base = """FROM estudiantes e
+                  LEFT JOIN resultados r ON r.estudiante_id = e.id
+                 WHERE """ + where_sql
+
+    sql_datos = ("""SELECT e.id, e.codigo, e.datos_json, e.valido,
+                           e.motivo_revision, e.campo_revision,
+                           e.mensaje_revision, e.error_inyectado,
+                           e.desenlace_real,
+                           r.s_academico, r.s_financiero, r.s_laboral,
+                           r.s_personal, r.p, r.p5, r.p95, r.nivel,
+                           r.factor_principal, r.problemas_json,
+                           r.requiere_intervencion, r.intervenciones_json,
+                           r.contribuciones_json """
+                 + sql_base
+                 + " ORDER BY " + prefijo_nulos + columna + " " + sentido
+                 + ", e.id ASC")
+
+    valores_datos = list(valores)
+    if limite is not None:
+        sql_datos += " LIMIT ? OFFSET ?"
+        valores_datos.extend([int(limite), int(offset or 0)])
 
     con = conectar(ruta)
     try:
-        return [_fila_a_estudiante(f)
-                for f in con.execute(sql, tuple(valores)).fetchall()]
+        filas = [_fila_a_estudiante(f)
+                 for f in con.execute(sql_datos, tuple(valores_datos)).fetchall()]
+        if limite is None:
+            total = len(filas)
+        else:
+            total = con.execute("SELECT COUNT(*) " + sql_base,
+                                tuple(valores)).fetchone()[0]
+        return total, filas
     finally:
         con.close()
+
+
+def listar_estudiantes(simulacion_id, nivel=None, intervencion=None,
+                       dimension=None, solo_revision=None, orden="p",
+                       descendente=True, ruta=None, desenlace=None,
+                       buscar=None, limite=None, offset=0):
+    """Estudiantes de una simulacion, con los filtros de la pagina.
+
+    nivel          -> "bajo" | "medio" | "alto"
+    intervencion   -> True / False
+    dimension      -> la dimension aparece entre los problemas del estudiante
+    solo_revision  -> True devuelve unicamente los que esperan revision humana
+    desenlace      -> "Dropout" | "Graduate" (dataset real UCI)
+
+    Los invalidos aparecen con resultado None: la pagina los muestra en la
+    tabla con su motivo, pero sin probabilidad.
+    """
+    _, filas = consultar_estudiantes(
+        simulacion_id, nivel=nivel, intervencion=intervencion,
+        dimension=dimension, solo_revision=solo_revision, desenlace=desenlace,
+        buscar=buscar, orden=orden, descendente=descendente,
+        limite=limite, offset=offset, ruta=ruta)
+    return filas
 
 
 def obtener_estudiante(estudiante_id, ruta=None):
@@ -250,7 +330,8 @@ def obtener_estudiante(estudiante_id, ruta=None):
     try:
         fila = con.execute(
             """SELECT e.id, e.simulacion_id, e.codigo, e.datos_json, e.valido,
-                      e.motivo_revision, e.campo_revision, e.error_inyectado,
+                      e.motivo_revision, e.campo_revision, e.mensaje_revision,
+                      e.error_inyectado, e.desenlace_real,
                       r.s_academico, r.s_financiero, r.s_laboral, r.s_personal,
                       r.p, r.p5, r.p95, r.nivel, r.factor_principal,
                       r.problemas_json, r.requiere_intervencion,
@@ -276,7 +357,9 @@ def _fila_a_estudiante(fila):
         "valido": bool(fila["valido"]),
         "motivo_revision": fila["motivo_revision"],
         "campo_revision": fila["campo_revision"],
+        "mensaje_revision": fila["mensaje_revision"],
         "error_inyectado": fila["error_inyectado"],
+        "desenlace_real": fila["desenlace_real"],
         "resultado": None,
     }
     if fila["p"] is None:

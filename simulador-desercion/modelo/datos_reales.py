@@ -34,6 +34,7 @@ Reglas de mapeo (documentadas en Calibracion Y FUentes/fuentes_de_datasets):
 
 import csv
 import os
+import random
 
 RAIZ_PROYECTO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUTA_UCI_DEFECTO = os.path.join(
@@ -155,10 +156,14 @@ def mapear_fila_uci(fila):
     }
 
 
-def cargar_cohorte_uci(n=None, solo_cerrados=True, ruta_csv=None):
+def cargar_cohorte_uci(n=None, solo_cerrados=True, ruta_csv=None, semilla=None):
     """Lee el CSV real de UCI y devuelve una lista con el mismo formato que
     generador.generar_cohorte(), agregando el campo 'desenlace_real'
     ('Dropout', 'Graduate' o 'Enrolled').
+
+    Cuando 0 < n < total_filas y se proporciona 'semilla', toma una muestra
+    aleatoria sin reemplazo reproducible a lo largo de todo el archivo en vez
+    de truncar las primeras n filas (que en el CSV estan agrupadas por carrera).
     """
     ruta = RUTA_UCI_DEFECTO if ruta_csv is None else ruta_csv
     if not os.path.exists(ruta):
@@ -171,8 +176,13 @@ def cargar_cohorte_uci(n=None, solo_cerrados=True, ruta_csv=None):
     if solo_cerrados:
         filas = [r for r in filas if r.get("Target") in ("Dropout", "Graduate")]
 
-    if n is not None and n > 0:
-        filas = filas[:n]
+    if n is not None and 0 < n < len(filas):
+        if semilla is None:
+            filas = filas[:n]
+        else:
+            rng = random.Random(semilla)
+            indices = sorted(rng.sample(range(len(filas)), n))
+            filas = [filas[idx] for idx in indices]
 
     cohorte = []
     for i, fila in enumerate(filas):
@@ -183,6 +193,39 @@ def cargar_cohorte_uci(n=None, solo_cerrados=True, ruta_csv=None):
             "desenlace_real": fila.get("Target"),
         })
     return cohorte
+
+
+def _curva_roc(pares, max_puntos=64):
+    """Calcula puntos compactos [fpr, tpr] de la curva ROC empirica."""
+    desc = sorted(pares, key=lambda x: x[0], reverse=True)
+    n_pos = sum(1 for _, _, y in desc if y == 1)
+    n_neg = len(desc) - n_pos
+    if n_pos == 0 or n_neg == 0:
+        return [[0.0, 0.0], [1.0, 1.0]]
+
+    puntos = [[0.0, 0.0]]
+    tp = 0
+    fp = 0
+    i = 0
+    total = len(desc)
+    while i < total:
+        j = i
+        while j < total and desc[j][0] == desc[i][0]:
+            if desc[j][2] == 1:
+                tp += 1
+            else:
+                fp += 1
+            j += 1
+        puntos.append([round(fp / n_neg, 4), round(tp / n_pos, 4)])
+        i = j
+
+    if len(puntos) <= max_puntos:
+        return puntos
+
+    paso = (len(puntos) - 1) / float(max_puntos - 1)
+    reducida = [puntos[int(round(k * paso))] for k in range(max_puntos - 1)]
+    reducida.append([1.0, 1.0])
+    return reducida
 
 
 def evaluar_contra_desenlace_real(estudiantes):
@@ -240,6 +283,7 @@ def evaluar_contra_desenlace_real(estudiantes):
         "p_media_desertores": sum(pos) / n_pos,
         "p_media_graduados": sum(neg) / n_neg,
         "auc_roc": auc,
+        "curva_roc": _curva_roc(pares),
         "matriz_confusion": {
             "vp": vp,
             "fn": fn,

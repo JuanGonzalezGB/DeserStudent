@@ -6,8 +6,10 @@ Endpoints:
   POST /api/simulaciones                      crea y guarda una simulacion
   GET  /api/simulaciones                      historial
   GET  /api/simulaciones/<id>                 resumen + validacion del modelo
-  GET  /api/simulaciones/<id>/estudiantes     tabla con filtros
+  GET  /api/simulaciones/<id>/estudiantes     tabla con filtros y paginacion
   GET  /api/estudiantes/<id>                  detalle de un estudiante
+  POST /api/evaluar                           evalua un registro (What-If)
+  GET  /api/config                            contrato y parametros de config.py
   GET  /                                      la pagina (static/index.html)
 
 Toda entrada de la API se valida antes de simular: un parametro mal formado
@@ -177,17 +179,33 @@ def create_app(ruta_db=None):
             raise ErrorDeEntrada("'dimension' debe ser una de %s"
                                  % (", ".join(config.DIMENSIONES),))
 
-        estudiantes = db.listar_estudiantes(
+        desenlace = request.args.get("desenlace") or None
+        if desenlace is not None and desenlace not in db.DESENLACES_VALIDOS:
+            raise ErrorDeEntrada("'desenlace' debe ser uno de %s"
+                                 % (", ".join(db.DESENLACES_VALIDOS),))
+
+        limite = None
+        offset = 0
+        if request.args.get("limite") not in (None, ""):
+            limite = _entero(request.args, "limite", 50, 1, N_MAXIMO)
+        if request.args.get("offset") not in (None, ""):
+            offset = _entero(request.args, "offset", 0, 0, 100_000)
+
+        total, estudiantes = db.consultar_estudiantes(
             simulacion_id,
             nivel=nivel,
             intervencion=_booleano_opcional(request.args.get("intervencion")),
             dimension=dimension,
             solo_revision=_booleano_opcional(request.args.get("revision")),
+            desenlace=desenlace,
+            buscar=request.args.get("buscar"),
             orden=request.args.get("orden", "p"),
             descendente=request.args.get("sentido", "desc") != "asc",
+            limite=limite,
+            offset=offset,
             ruta=ruta())
         return jsonify({"simulacion_id": simulacion_id,
-                        "total": len(estudiantes),
+                        "total": total,
                         "estudiantes": estudiantes})
 
     @app.get("/api/estudiantes/<int:estudiante_id>")
@@ -197,6 +215,67 @@ def create_app(ruta_db=None):
             return jsonify({"error": "no existe el estudiante %d"
                                      % estudiante_id}), 404
         return jsonify(estudiante)
+
+    @app.get("/api/config")
+    def obtener_configuracion():
+        return jsonify(modelo.configuracion_publica())
+
+    @app.post("/api/evaluar")
+    def evaluar_individual():
+        cuerpo = request.get_json(silent=True)
+        if not isinstance(cuerpo, dict):
+            raise ErrorDeEntrada("el cuerpo debe ser un objeto JSON")
+        if "datos" not in cuerpo:
+            raise ErrorDeEntrada("falta el objeto 'datos' del estudiante")
+
+        base_params = {
+            "b0": modelo.B0_REFERENCIA_DEFECTO,
+            "umbral_medio": config.UMBRAL_MEDIO,
+            "umbral_alto": config.UMBRAL_ALTO,
+            "k_montecarlo": 250,
+            "semilla": config.SEMILLA_POR_DEFECTO,
+        }
+
+        if cuerpo.get("simulacion_id") is not None:
+            sim_id = _entero(cuerpo, "simulacion_id", 1, 1, 10_000_000)
+            sim = db.obtener_simulacion(sim_id, ruta())
+            if sim is None:
+                return jsonify({"error": "no existe la simulacion %d"
+                                         % sim_id}), 404
+            p_sim = sim["parametros"]
+            base_params["b0"] = p_sim["b0_calibrado"]
+            base_params["umbral_medio"] = p_sim["umbral_medio"]
+            base_params["umbral_alto"] = p_sim["umbral_alto"]
+            base_params["semilla"] = p_sim["semilla"]
+            base_params["k_montecarlo"] = min(p_sim["k_montecarlo"], 1000)
+
+        b0 = _decimal(cuerpo, "b0", base_params["b0"],
+                      config.CALIBRACION_B0_MIN, config.CALIBRACION_B0_MAX)
+        umbral_medio = _decimal(cuerpo, "umbral_medio",
+                                base_params["umbral_medio"], 0.001, 0.999)
+        umbral_alto = _decimal(cuerpo, "umbral_alto",
+                               base_params["umbral_alto"], 0.001, 0.999)
+        if umbral_medio >= umbral_alto:
+            raise ErrorDeEntrada("'umbral_medio' debe ser menor que 'umbral_alto'")
+        k = _entero(cuerpo, "k_montecarlo", base_params["k_montecarlo"],
+                    1, K_MAXIMO)
+        semilla = _entero(cuerpo, "semilla", base_params["semilla"],
+                          0, 2**31 - 1)
+
+        actual = modelo.evaluar_estudiante(
+            cuerpo["datos"], b0=b0, umbral_medio=umbral_medio,
+            umbral_alto=umbral_alto, k_montecarlo=k, semilla=semilla)
+
+        if "datos_base" in cuerpo and cuerpo["datos_base"] is not None:
+            base = modelo.evaluar_estudiante(
+                cuerpo["datos_base"], b0=b0, umbral_medio=umbral_medio,
+                umbral_alto=umbral_alto, k_montecarlo=k, semilla=semilla)
+            actual["comparacion_base"] = base
+            if actual["resultado"] and base["resultado"]:
+                actual["delta_p"] = (actual["resultado"]["p"]
+                                     - base["resultado"]["p"])
+
+        return jsonify(actual)
 
     # ------------------------------------------------ manejo de errores --
     @app.errorhandler(ErrorDeEntrada)

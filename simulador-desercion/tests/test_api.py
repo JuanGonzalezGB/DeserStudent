@@ -450,3 +450,160 @@ def test_los_json_guardados_son_json_valido(ruta_db):
 
     for texto in fila:
         assert isinstance(json.loads(texto), dict)
+
+
+# =========================================== MEJORAS DE BACKEND Y API ===
+def test_migracion_idempotente_de_esquema_anterior(tmp_path):
+    """Una base creada con el esquema viejo gana las columnas nuevas sola."""
+    ruta_vieja = str(tmp_path / "vieja.db")
+    con = sqlite3.connect(ruta_vieja)
+    con.executescript("""
+        CREATE TABLE simulaciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT NOT NULL,
+            semilla INTEGER NOT NULL, n INTEGER NOT NULL, tasa_base REAL NOT NULL,
+            parametros_json TEXT NOT NULL, b0_calibrado REAL NOT NULL,
+            indice_general REAL NOT NULL, pct_bajo REAL NOT NULL,
+            pct_medio REAL NOT NULL, pct_alto REAL NOT NULL,
+            pct_intervencion REAL NOT NULL, n_validos INTEGER NOT NULL,
+            n_revision_humana INTEGER NOT NULL, resumen_json TEXT NOT NULL,
+            validacion_json TEXT NOT NULL
+        );
+        CREATE TABLE estudiantes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            simulacion_id INTEGER NOT NULL, codigo TEXT NOT NULL,
+            datos_json TEXT NOT NULL, valido INTEGER NOT NULL,
+            motivo_revision TEXT, campo_revision TEXT, error_inyectado TEXT
+        );
+        CREATE TABLE resultados (
+            estudiante_id INTEGER PRIMARY KEY,
+            s_academico REAL NOT NULL, s_financiero REAL NOT NULL,
+            s_laboral REAL NOT NULL, s_personal REAL NOT NULL,
+            p REAL NOT NULL, p5 REAL NOT NULL, p95 REAL NOT NULL,
+            nivel TEXT NOT NULL, factor_principal TEXT NOT NULL,
+            problemas_json TEXT NOT NULL, requiere_intervencion INTEGER NOT NULL,
+            intervenciones_json TEXT NOT NULL, contribuciones_json TEXT NOT NULL
+        );
+    """)
+    con.close()
+
+    db.inicializar(ruta_vieja)
+    sim = modelo.simular(n=25, semilla=42, k_montecarlo=10)
+    sim_id = db.guardar_simulacion(sim, ruta_vieja)
+    lista = db.listar_estudiantes(sim_id, ruta=ruta_vieja)
+    assert len(lista) == 25
+
+
+def test_persiste_mensaje_revision_y_desenlace_real_uci(cliente):
+    sim_sint = crear(cliente, n=120).get_json()
+    rev = cliente.get(
+        "/api/simulaciones/%d/estudiantes?revision=true" % sim_sint["id"]
+    ).get_json()["estudiantes"]
+    assert rev
+    assert rev[0]["mensaje_revision"]
+
+    sim_uci = cliente.post(
+        "/api/simulaciones",
+        json={"origen": "uci", "n": 60, "semilla": 42,
+              "tasa_base": 0.3915, "k_montecarlo": 20}
+    ).get_json()
+    assert "curva_roc" in sim_uci["resumen"]["evaluacion_real"]
+    assert len(sim_uci["resumen"]["evaluacion_real"]["curva_roc"]) >= 2
+
+    est_uci = cliente.get(
+        "/api/simulaciones/%d/estudiantes?desenlace=Dropout" % sim_uci["id"]
+    ).get_json()
+    assert est_uci["total"] > 0
+    assert all(e["desenlace_real"] == "Dropout" for e in est_uci["estudiantes"])
+
+    detalle = cliente.get(
+        "/api/estudiantes/%d" % est_uci["estudiantes"][0]["id"]
+    ).get_json()
+    assert detalle["desenlace_real"] == "Dropout"
+
+
+def test_submuestreo_uci_es_reproducible_con_semilla():
+    from modelo import datos_reales
+
+    a1 = datos_reales.cargar_cohorte_uci(n=40, semilla=10)
+    a2 = datos_reales.cargar_cohorte_uci(n=40, semilla=10)
+    b = datos_reales.cargar_cohorte_uci(n=40, semilla=99)
+    assert a1 == a2
+    assert a1 != b
+
+
+def test_orden_por_severidad_de_nivel_y_nulos_al_final(cliente):
+    sim = crear(cliente, n=250).get_json()
+    desc = cliente.get(
+        "/api/simulaciones/%d/estudiantes?orden=nivel&sentido=desc" % sim["id"]
+    ).get_json()["estudiantes"]
+    pesos = {"alto": 3, "medio": 2, "bajo": 1}
+    validos_desc = [pesos[e["resultado"]["nivel"]]
+                    for e in desc if e["resultado"] is not None]
+    assert validos_desc == sorted(validos_desc, reverse=True)
+    # Los invalidos quedan al final tanto en DESC como en ASC.
+    assert desc[-1]["resultado"] is None
+
+    asc = cliente.get(
+        "/api/simulaciones/%d/estudiantes?orden=p&sentido=asc" % sim["id"]
+    ).get_json()["estudiantes"]
+    assert asc[0]["resultado"] is not None
+    assert asc[-1]["resultado"] is None
+
+
+def test_paginacion_y_busqueda_en_estudiantes(cliente):
+    sim = crear(cliente, n=50).get_json()
+    pag = cliente.get(
+        "/api/simulaciones/%d/estudiantes?limite=15&offset=10" % sim["id"]
+    ).get_json()
+    assert pag["total"] == 50
+    assert len(pag["estudiantes"]) == 15
+
+    busq = cliente.get(
+        "/api/simulaciones/%d/estudiantes?buscar=UNA-0005" % sim["id"]
+    ).get_json()
+    assert busq["total"] == 1
+    assert busq["estudiantes"][0]["codigo"] == "UNA-0005"
+
+
+def test_endpoint_config_expone_contrato_oficial(cliente):
+    cfg = cliente.get("/api/config").get_json()
+    assert cfg["dimensiones"] == list(config.DIMENSIONES)
+    assert set(cfg["campos_obligatorios"]) == set(config.CAMPOS_OBLIGATORIOS)
+    assert cfg["coeficientes"] == dict(config.COEFICIENTES)
+    assert set(cfg["intervenciones"]) == set(config.DIMENSIONES)
+
+
+def test_endpoint_evaluar_individual_y_comparacion_whatif(cliente, registro):
+    sim = crear(cliente, n=80, k_montecarlo=50).get_json()
+    est_ref = cliente.get(
+        "/api/simulaciones/%d/estudiantes?limite=1" % sim["id"]
+    ).get_json()["estudiantes"][0]
+
+    # Evaluar el mismo registro contra la simulacion activa reproduce p, p5 y p95
+    resp = cliente.post("/api/evaluar", json={
+        "simulacion_id": sim["id"],
+        "k_montecarlo": 50,
+        "datos": est_ref["datos"],
+    })
+    assert resp.status_code == 200
+    ev = resp.get_json()
+    assert ev["valido"] is True
+    assert ev["resultado"]["p"] == pytest.approx(est_ref["resultado"]["p"])
+    assert ev["resultado"]["p5"] == pytest.approx(est_ref["resultado"]["p5"])
+    assert ev["resultado"]["p95"] == pytest.approx(est_ref["resultado"]["p95"])
+
+    # Comparacion antes vs despues (reduciendo saldo y dando apoyo financiero)
+    mejorado = dict(registro, saldo_pendiente_cop=0, tiene_apoyo_financiero=True)
+    comp = cliente.post("/api/evaluar", json={
+        "datos": mejorado,
+        "datos_base": registro,
+        "k_montecarlo": 40,
+    }).get_json()
+    assert comp["delta_p"] < 0
+
+    # Caso invalido (A03): devuelve valido=False con mensaje legible, no 400/500
+    invalido = dict(registro, estrato=1, ingreso_hogar_smmlv=15.0)
+    rechazo = cliente.post("/api/evaluar", json={"datos": invalido}).get_json()
+    assert rechazo["valido"] is False
+    assert rechazo["motivo_revision"] == "datos_contradictorios"
+    assert rechazo["mensaje_revision"]
