@@ -1,386 +1,541 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-tema="claro">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Simulador de deserción — Portal de Acompañamiento</title>
-<link rel="stylesheet" href="/static/styles.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Simulador de probabilidad de deserción — Portal de Acompañamiento</title>
+  <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
 
-<header class="cabecera">
-  <div class="contenedor">
-    <p class="institucion">Universidad Católica de Colombia · Portal de Acompañamiento</p>
-    <h1>Simulador de probabilidad de deserción</h1>
-    <p class="subtitulo">
-      Cadena de 3 pasos: <strong>validar</strong> → <strong>calcular riesgo</strong> → <strong>intervenir</strong>.
-      El riesgo se estima con una <strong>regresión logística</strong> sobre 4 dimensiones.
-      Montecarlo se usa en dos lugares: para generar la cohorte sintética y para
-      propagar la incertidumbre de los coeficientes.
-    </p>
-  </div>
-</header>
-
-<main class="contenedor">
-
-  <!-- ============================== 1. FUENTE Y PARÁMETROS ============================== -->
-  <section class="tarjeta" aria-labelledby="t-parametros">
-    <h2 id="t-parametros">1. Selecciona qué datos quieres evaluar</h2>
-    <p class="nota">
-      Elige una de las cuatro tarjetas para cargar o evaluar una cohorte. Cuando eliges el
-      <strong>Dataset Real UCI</strong>, los datos vienen directamente del archivo real de estudiantes
-      y los parámetros técnicos de generación se ocultan automáticamente.
-    </p>
-
-    <div class="rejilla-escenarios" role="group" aria-label="Modos de datos">
-      <button type="button" class="tarjeta-escenario activa" data-modo-sim="referencia">
-        <span class="insignia-fuente sintetica">Datos Simulados · Referencia</span>
-        <strong>Simulación de referencia (Alerta temprana)</strong>
-        <span class="desc-escenario">500 estudiantes sintéticos (semilla 42) · Tasa base semestral del 9,0% (pico de 1.er semestre).</span>
-      </button>
-      <button type="button" class="tarjeta-escenario" data-modo-sim="spadies">
-        <span class="insignia-fuente spadies">Datos Simulados · Calibración MEN</span>
-        <strong>Cohorte calibrada con SPADIES 3.0 (Colombia, 2024)</strong>
-        <span class="desc-escenario">500 estudiantes sintéticos · Calibrada a la tasa oficial universitaria del MEN: TDA 8,65% → 4,42% semestral.</span>
-      </button>
-      <button type="button" class="tarjeta-escenario" data-modo-sim="uci_full">
-        <span class="insignia-fuente real">Dataset Real · UCICompleto</span>
-        <strong>Dataset Real UCI — Cohorte completa (3.630 estudiantes)</strong>
-        <span class="desc-escenario">Registros reales de educación superior (Realinho et al., 2022) con desenlace conocido (1.421 desertores, 2.209 graduados · AUC = 0,8936).</span>
-      </button>
-      <button type="button" class="tarjeta-escenario" data-modo-sim="uci_500">
-        <span class="insignia-fuente real">Dataset Real · Muestra + SPADIES</span>
-        <strong>Dataset Real UCI — Muestra de 500 calibrada a SPADIES (4,42%)</strong>
-        <span class="desc-escenario">Primeros 500 estudiantes reales del dataset UCI evaluados bajo la tasa base semestral colombiana de SPADIES 3.0.</span>
-      </button>
-    </div>
-
-    <!-- Ficha informativa cuando se selecciona un dataset real -->
-    <div id="ficha-dataset-real" class="ficha-fuente real" hidden>
-      <div class="ficha-fuente-cabecera">
-        <div>
-          <span class="insignia-fuente real">ARCHIVO DE DATOS REALES ACTIVO</span>
-          <h3 id="titulo-ficha-real">Dataset: Predict Students' Dropout and Academic Success (UCI)</h3>
+  <!-- ======================= BARRA SUPERIOR DE COMANDO ======================= -->
+  <header class="topbar">
+    <div class="contenedor topbar-interior">
+      <div class="marca-bloque">
+        <span class="institucion-kicker">Universidad Católica de Colombia · Portal de Acompañamiento</span>
+        <div class="fila-titulo-app">
+          <h1>Simulador de probabilidad de deserción</h1>
+          <span class="chip-arquitectura" title="Cadena determinista de validación + regresión logística calibrada + Montecarlo">
+            Paso 1 Validar → Paso 2 Logística → Paso 3 Intervenir
+          </span>
         </div>
-        <button type="button" id="btn-ejecutar-real" class="btn-primario">Evaluar este dataset ahora</button>
       </div>
-      <div class="rejilla-ficha-real">
-        <div><strong>Archivo local:</strong> <code>data/predict+students+dropout+and+academic+success/data.csv</code></div>
-        <div><strong>Autores y fuente:</strong> Realinho, Machado, Baptista &amp; Martins (2022) · UCI ML Repository</div>
-        <div><strong>Registros a evaluar:</strong> <span id="ficha-real-n">3.630 estudiantes reales con desenlace cerrado</span></div>
-        <div><strong>Calibración b₀:</strong> <span id="ficha-real-tasa">Tasa observada en el dataset (39,15%)</span></div>
+
+      <div class="acciones-topbar">
+        <button type="button" id="btn-toggle-config" class="btn-accion btn-config" aria-expanded="false" aria-controls="gaveta-config">
+          <span class="icono-btn" aria-hidden="true">⚙</span>
+          <span>Parámetros</span>
+        </button>
+        <button type="button" id="btn-tema" class="btn-icono" title="Cambiar entre modo claro y modo proyección (oscuro)" aria-label="Cambiar tema visual">
+          <span id="icono-tema" aria-hidden="true">☾</span>
+        </button>
       </div>
     </div>
 
-    <details id="acordeon-parametros" class="acordeon-parametros" open>
-      <summary id="summary-parametros">Parámetros manuales de la simulación (personalizar)</summary>
-      <form id="form-simular" class="rejilla-form" style="margin-top:12px">
-        <label>
-          Origen de los datos
-          <select id="origen" name="origen">
-            <option value="sintetica">Cohorte sintética (Montecarlo 1)</option>
-            <option value="uci">Dataset real UCI (Realinho et al.)</option>
-          </select>
-          <small>Sintética o archivo CSV real</small>
-        </label>
-        <label id="campo-n">
-          Estudiantes (n)
-          <input type="number" id="n" name="n" value="500" min="1" max="5000" step="1" required>
-          <small id="ayuda-n">Tamaño de la cohorte a evaluar</small>
-        </label>
-        <label id="campo-semilla">
-          Semilla aleatoria
-          <input type="number" id="semilla" name="semilla" value="42" min="0" step="1" required>
-          <small>Misma semilla = misma cohorte sintética</small>
-        </label>
-        <!-- step="any" a propósito: con un step fijo, el navegador solo acepta
-             los valores de la rejilla min + k·step y rechazaría 0.09, 0.15 o
-             0.35, que son justo los valores por defecto. -->
-        <label>
-          Tasa base semestral
-          <input type="number" id="tasa_base" name="tasa_base" value="0.09" min="0.001" max="0.999" step="any" required>
-          <small>Calibra b₀ (0.09 ref. · 0.0442 SPADIES)</small>
-        </label>
-        <label>
-          Umbral medio
-          <input type="number" id="umbral_medio" name="umbral_medio" value="0.15" min="0.001" max="0.999" step="any" required>
-          <small>p ≥ este valor → medio</small>
-        </label>
-        <label>
-          Umbral alto
-          <input type="number" id="umbral_alto" name="umbral_alto" value="0.35" min="0.001" max="0.999" step="any" required>
-          <small>p ≥ este valor → alto</small>
-        </label>
-        <label>
-          K (Montecarlo incertidumbre)
-          <input type="number" id="k_montecarlo" name="k_montecarlo" value="1000" min="1" max="5000" step="1" required>
-          <small>Repeticiones para el intervalo P5–P95</small>
-        </label>
-        <div class="acciones-form">
-          <button type="submit" id="btn-simular">Ejecutar y guardar</button>
-          <span id="estado" class="estado" role="status" aria-live="polite"></span>
+    <!-- Selector rápido de escenarios en una sola franja compacta -->
+    <div class="franja-escenarios">
+      <div class="contenedor franja-escenarios-interior">
+        <div class="grupo-escenarios" role="group" aria-label="Escenarios preconfigurados">
+          <span class="etiqueta-franja">Escenario rápido:</span>
+          <button type="button" class="pildora-escenario activa" data-modo-sim="referencia" title="500 estudiantes sintéticos (semilla 42) · Tasa base 9,0% alerta temprana">
+            <span class="punto sintetica"></span>
+            <span>Referencia <strong>9,0%</strong></span>
+            <small>n=500</small>
+          </button>
+          <button type="button" class="pildora-escenario" data-modo-sim="spadies" title="500 estudiantes sintéticos calibrados a SPADIES 3.0 (TDA 8,65% → 4,42% semestral)">
+            <span class="punto spadies"></span>
+            <span>SPADIES MEN <strong>4,42%</strong></span>
+            <small>n=500</small>
+          </button>
+          <button type="button" class="pildora-escenario" data-modo-sim="uci_full" title="Cohorte completa del dataset público UCI (Realinho et al., 2022) con desenlace real conocido">
+            <span class="punto real"></span>
+            <span>Dataset Real UCI <strong>Completo</strong></span>
+            <small>3.630 reales</small>
+          </button>
+          <button type="button" class="pildora-escenario" data-modo-sim="uci_500" title="Muestra reproducible de 500 estudiantes reales del dataset UCI calibrada a tasa SPADIES">
+            <span class="punto real"></span>
+            <span>Muestra UCI + <strong>SPADIES</strong></span>
+            <small>500 reales</small>
+          </button>
         </div>
-      </form>
-    </details>
-  </section>
 
-  <!-- Banner de contexto: dice claramente qué estamos mirando ahora mismo -->
-  <div id="banner-contexto" class="banner-contexto"></div>
-
-      <!-- ============================== PESTAÑAS ============================== -->
-  <nav class="pestanas" role="tablist" aria-label="Secciones del simulador">
-    <button role="tab" class="pestana activa" data-panel="panel-resultados" aria-selected="true">Resultados</button>
-    <button role="tab" class="pestana" data-panel="panel-whatif" aria-selected="false">Evaluador individual (What-If)</button>
-    <button role="tab" class="pestana" data-panel="panel-validacion" aria-selected="false">Validación del modelo</button>
-    <button role="tab" class="pestana" data-panel="panel-historial" aria-selected="false">Historial</button>
-  </nav>
-
-  <!-- ============================== RESULTADOS ============================== -->
-  <div id="panel-resultados" class="panel activo" role="tabpanel">
-
-    <!-- 2. Tarjetas de indicadores -->
-    <section aria-labelledby="t-indicadores">
-      <h2 id="t-indicadores" class="titulo-seccion">2. Índice de riesgo general</h2>
-      <div id="indicadores" class="rejilla-indicadores">
-        <p class="vacio">Todavía no hay simulación. Pulsa <strong>Simular</strong>.</p>
+        <div id="estado-global" class="estado-global" role="status" aria-live="polite">
+          Cargando simulación…
+        </div>
       </div>
-    </section>
+    </div>
 
-    <!-- 3. Gráficas -->
-    <section class="rejilla-graficas" aria-labelledby="t-graficas">
-      <h2 id="t-graficas" class="titulo-seccion ancho-total">3. Distribución y contribución por dimensión</h2>
-      <div class="tarjeta">
-        <h3>Distribución de probabilidades</h3>
-        <p class="nota">Cuántos estudiantes caen en cada rango de probabilidad de deserción.
-           Las líneas marcan los umbrales de nivel.</p>
-        <div id="grafica-histograma" class="lienzo"></div>
-      </div>
-      <div class="tarjeta">
-        <h3>Contribución promedio al riesgo</h3>
-        <p class="nota">Aporte medio de cada dimensión al logit (b<sub>d</sub> · s<sub>d</sub>).
-           Es lo que explica <em>por qué</em> sube el riesgo.</p>
-        <div id="grafica-contribucion" class="lienzo"></div>
-      </div>
-    </section>
+    <!-- Panel colapsable de configuración avanzada -->
+    <div id="gaveta-config" class="gaveta-config" hidden>
+      <div class="contenedor">
+        <form id="form-simular" class="form-parametros">
+          <div class="cabecera-gaveta">
+            <div>
+              <h2>Configurar y ejecutar nueva corrida</h2>
+              <p class="texto-suave">
+                Ajusta el origen de datos, tamaño de cohorte, tasa de calibración para <code>b₀</code> y umbrales operativos.
+                Todo resultado queda persistido en SQLite (<code>data/simulador.db</code>).
+              </p>
+            </div>
+            <button type="button" id="btn-cerrar-config" class="btn-texto">Cerrar ✕</button>
+          </div>
 
-    <!-- 4. Tabla de estudiantes + detalle -->
-    <section aria-labelledby="t-estudiantes">
-      <h2 id="t-estudiantes" class="titulo-seccion">4. Estudiantes</h2>
-      <div class="tarjeta">
-        <div class="filtros">
-          <label>Buscar código
+          <div class="rejilla-parametros">
+            <label class="campo-form">
+              <span>Origen de los datos</span>
+              <select id="origen" name="origen">
+                <option value="sintetica">Cohorte sintética (Montecarlo 1)</option>
+                <option value="uci">Dataset real UCI (Realinho et al., 2022)</option>
+              </select>
+              <small id="ayuda-origen">Generación con dependencias o CSV real</small>
+            </label>
+
+            <label class="campo-form" id="campo-n">
+              <span>Estudiantes (n)</span>
+              <input type="number" id="n" name="n" value="500" min="1" max="5000" step="1" required>
+              <small id="ayuda-n">Tamaño de la cohorte (1 – 5.000)</small>
+            </label>
+
+            <label class="campo-form" id="campo-semilla">
+              <span>Semilla reproducible</span>
+              <input type="number" id="semilla" name="semilla" value="42" min="0" step="1" required>
+              <small id="ayuda-semilla">Misma semilla = misma cohorte e intervalos</small>
+            </label>
+
+            <label class="campo-form">
+              <span>Tasa base semestral</span>
+              <input type="number" id="tasa_base" name="tasa_base" value="0.09" min="0.001" max="0.999" step="any" required>
+              <small>Despeja b₀ (0.09 alerta · 0.0442 SPADIES · 0.3915 UCI)</small>
+            </label>
+
+            <label class="campo-form">
+              <span>Umbral riesgo medio</span>
+              <input type="number" id="umbral_medio" name="umbral_medio" value="0.15" min="0.001" max="0.999" step="any" required>
+              <small>p ≥ umbral → nivel medio</small>
+            </label>
+
+            <label class="campo-form">
+              <span>Umbral riesgo alto</span>
+              <input type="number" id="umbral_alto" name="umbral_alto" value="0.35" min="0.001" max="0.999" step="any" required>
+              <small>p ≥ umbral → nivel alto</small>
+            </label>
+
+            <label class="campo-form">
+              <span>Repeticiones K (Montecarlo 2)</span>
+              <input type="number" id="k_montecarlo" name="k_montecarlo" value="1000" min="1" max="5000" step="1" required>
+              <small>Muestreo de b_d para intervalo P5–P95</small>
+            </label>
+
+            <div class="acciones-ejecucion">
+              <button type="submit" id="btn-simular" class="btn-primario">
+                Ejecutar simulación y guardar
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </header>
+
+  <!-- ======================= CONTENIDO PRINCIPAL ======================= -->
+  <main class="contenedor contenido-principal">
+
+    <!-- Cinta contextual de la simulación activa -->
+    <section id="banner-contexto" class="cinta-contexto" aria-label="Contexto de la corrida activa"></section>
+
+    <!-- Navegación principal por pestañas -->
+    <nav class="barra-pestanas" role="tablist" aria-label="Vistas del simulador">
+      <button type="button" role="tab" class="pestana activa" data-panel="panel-resultados" aria-selected="true">
+        <span>Panorama y Estudiantes</span>
+        <span id="badge-tab-estudiantes" class="badge-pestana">—</span>
+      </button>
+      <button type="button" role="tab" class="pestana" data-panel="panel-whatif" aria-selected="false">
+        <span>Simulador de Acompañamiento (What-If)</span>
+        <span id="badge-tab-whatif" class="badge-pestana acento">En vivo</span>
+      </button>
+      <button type="button" role="tab" class="pestana" data-panel="panel-validacion" aria-selected="false">
+        <span>Validación del Modelo</span>
+        <span id="badge-tab-validacion" class="badge-pestana exito">4/4</span>
+      </button>
+      <button type="button" role="tab" class="pestana" data-panel="panel-historial" aria-selected="false">
+        <span>Historial SQLite</span>
+        <span id="badge-tab-historial" class="badge-pestana">—</span>
+      </button>
+    </nav>
+
+    <!-- =================== PESTAÑA 1: PANORAMA Y ESTUDIANTES =================== -->
+    <section id="panel-resultados" class="panel-vista activo" role="tabpanel">
+
+      <!-- Tarjetas ejecutivas de KPIs -->
+      <div id="indicadores" class="rejilla-kpis">
+        <p class="vacio">Cargando indicadores de la cohorte…</p>
+      </div>
+
+      <!-- Barra proporcional apilada de toda la cohorte -->
+      <div id="barra-proporcion-cohorte" class="tarjeta tarjeta-compacta" hidden></div>
+
+      <!-- Gráficas analíticas principales -->
+      <div class="rejilla-dos-columnas">
+        <article class="tarjeta">
+          <div class="cabecera-tarjeta">
+            <div>
+              <h3>Distribución de probabilidades de deserción</h3>
+              <p class="nota-tarjeta" id="subtitulo-histograma">
+                Frecuencia por rango de probabilidad semestral <code>p</code> y umbrales operativos.
+              </p>
+            </div>
+            <div id="controles-histograma" class="controles-tarjeta" hidden>
+              <label class="switch-compacto">
+                <input type="checkbox" id="chk-desglose-real" checked>
+                <span>Separar Desertó vs. Graduado</span>
+              </label>
+            </div>
+          </div>
+          <div id="grafica-histograma" class="lienzo-svg"></div>
+        </article>
+
+        <article class="tarjeta">
+          <div class="cabecera-tarjeta">
+            <div>
+              <h3>Aporte promedio al riesgo y focos críticos</h3>
+              <p class="nota-tarjeta">
+                Contribución media al logit (<code>b_d · s̄_d</code>) y total de estudiantes con problema (<code>s_d ≥ 0,60</code>). Pulsa una barra para filtrar.
+              </p>
+            </div>
+          </div>
+          <div id="grafica-contribucion" class="lienzo-svg"></div>
+        </article>
+      </div>
+
+      <!-- Explorador de estudiantes -->
+      <article class="tarjeta seccion-tabla" aria-labelledby="titulo-explorador">
+        <div class="cabecera-explorador">
+          <div>
+            <h3 id="titulo-explorador">Explorador de estudiantes de la cohorte</h3>
+            <p class="nota-tarjeta" id="caption-tabla">Selecciona cualquier estudiante para abrir su diagnóstico e intervención a la derecha.</p>
+          </div>
+          <div class="acciones-tabla">
+            <button type="button" id="btn-limpiar-filtros" class="btn-secundario btn-chico" hidden>Limpiar filtros</button>
+            <button type="button" id="btn-exportar-csv" class="btn-secundario btn-chico">⬇ Exportar CSV filtrado</button>
+          </div>
+        </div>
+
+        <!-- Píldoras de filtro rápido con conteos vivos -->
+        <div id="chips-rapidos" class="barra-chips" role="group" aria-label="Filtros rápidos"></div>
+
+        <!-- Barra de filtros combinables -->
+        <div class="barra-filtros">
+          <label class="filtro-item filtro-busqueda">
+            <span>Buscar código</span>
             <input type="search" id="f-buscar" placeholder="Ej. UNA-0042" autocomplete="off">
           </label>
-          <label>Nivel
+
+          <label class="filtro-item">
+            <span>Nivel de riesgo</span>
             <select id="f-nivel">
-              <option value="">Todos</option>
-              <option value="bajo">Bajo</option>
-              <option value="medio">Medio</option>
+              <option value="">Todos los niveles</option>
               <option value="alto">Alto</option>
+              <option value="medio">Medio</option>
+              <option value="bajo">Bajo</option>
             </select>
           </label>
-          <label>Intervención
+
+          <label class="filtro-item">
+            <span>Intervención</span>
             <select id="f-intervencion">
               <option value="">Todos</option>
-              <option value="true">Requiere</option>
-              <option value="false">No requiere</option>
+              <option value="true">Requiere acompañamiento</option>
+              <option value="false">Sin intervención</option>
             </select>
           </label>
-          <label>Dimensión problemática
+
+          <label class="filtro-item">
+            <span>Dimensión problemática</span>
             <select id="f-dimension">
-              <option value="">Todas</option>
-              <option value="academica">Académica</option>
-              <option value="financiera">Financiera</option>
-              <option value="laboral">Laboral</option>
-              <option value="personal">Personal</option>
+              <option value="">Todas las dimensiones</option>
+              <option value="academica">Académica (sA ≥ 0,60)</option>
+              <option value="financiera">Financiera (sF ≥ 0,60)</option>
+              <option value="laboral">Laboral (sL ≥ 0,60)</option>
+              <option value="personal">Personal (sP ≥ 0,60)</option>
             </select>
           </label>
-          <label>Ordenar por
+
+          <label class="filtro-item" id="bloque-filtro-desenlace" hidden>
+            <span>Desenlace real (UCI)</span>
+            <select id="f-desenlace">
+              <option value="">Todos</option>
+              <option value="Dropout">Desertó (Dropout)</option>
+              <option value="Graduate">Graduado (Graduate)</option>
+            </select>
+          </label>
+
+          <label class="filtro-item">
+            <span>Ordenar por</span>
             <select id="f-orden">
-              <option value="p|desc">Probabilidad (mayor primero)</option>
-              <option value="p|asc">Probabilidad (menor primero)</option>
-              <option value="codigo|asc">Código</option>
-              <option value="s_academico|desc">Riesgo académico</option>
-              <option value="s_financiero|desc">Riesgo financiero</option>
-              <option value="s_laboral|desc">Riesgo laboral</option>
-              <option value="s_personal|desc">Riesgo personal</option>
+              <option value="p|desc">Probabilidad (mayor a menor)</option>
+              <option value="p|asc">Probabilidad (menor a mayor)</option>
+              <option value="nivel|desc">Severidad de nivel (Alto → Bajo)</option>
+              <option value="s_academico|desc">Subpuntaje Académico</option>
+              <option value="s_financiero|desc">Subpuntaje Financiero</option>
+              <option value="s_laboral|desc">Subpuntaje Laboral</option>
+              <option value="s_personal|desc">Subpuntaje Personal</option>
+              <option value="codigo|asc">Código estudiantil</option>
             </select>
           </label>
-          <label class="casilla">
+
+          <label class="filtro-check">
             <input type="checkbox" id="f-revision">
-            Solo revisión humana
+            <span>Solo revisión humana</span>
           </label>
-          <button type="button" id="btn-exportar-csv" class="btn-secundario">Exportar CSV</button>
         </div>
 
         <div class="envoltorio-tabla">
-          <table id="tabla-estudiantes">
-            <caption id="caption-tabla">Sin datos todavía.</caption>
+          <table id="tabla-estudiantes" class="tabla-datos">
             <thead>
-              <tr>
+              <tr id="cabecera-tabla-estudiantes">
                 <th scope="col">Código</th>
-                <th scope="col">p (P5–P95)</th>
+                <th scope="col" class="col-desenlace" hidden>Realidad UCI</th>
+                <th scope="col">Probabilidad (P5–P95)</th>
                 <th scope="col">Nivel</th>
-                <th scope="col">Acad.</th>
-                <th scope="col">Finan.</th>
-                <th scope="col">Labor.</th>
-                <th scope="col">Pers.</th>
+                <th scope="col">Académica</th>
+                <th scope="col">Financiera</th>
+                <th scope="col">Laboral</th>
+                <th scope="col">Personal</th>
                 <th scope="col">Factor principal</th>
-                <th scope="col">Problemas</th>
-                <th scope="col">Intervención</th>
+                <th scope="col">Acompañamiento</th>
               </tr>
             </thead>
             <tbody id="cuerpo-tabla"></tbody>
           </table>
         </div>
-      </div>
 
-      <div id="detalle" class="tarjeta detalle" hidden aria-live="polite"></div>
+        <!-- Paginación rápida en cliente -->
+        <div class="barra-paginacion">
+          <div class="info-pagina" id="info-paginacion">Mostrando 0 de 0</div>
+          <div class="controles-pagina">
+            <label class="selector-tamano">
+              <span>Filas:</span>
+              <select id="tamano-pagina">
+                <option value="25" selected>25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+              </select>
+            </label>
+            <button type="button" id="btn-pag-ant" class="btn-secundario btn-chico">← Anterior</button>
+            <span id="indicador-pagina" class="indicador-pagina">1 / 1</span>
+            <button type="button" id="btn-pag-sig" class="btn-secundario btn-chico">Siguiente →</button>
+          </div>
+        </div>
+      </article>
     </section>
-  </div>
 
-  <!-- ============================== EVALUADOR WHAT-IF ============================== -->
-  <div id="panel-whatif" class="panel" role="tabpanel">
-    <h2 class="titulo-seccion">Evaluador individual (Simulador What-If)</h2>
-    <p class="nota ancho-total">
-      Prueba en tiempo real la cadena de 3 pasos (<strong>Paso 1: Validar</strong> →
-      <strong>Paso 2: Riesgo logístico</strong> → <strong>Paso 3: Intervención</strong>)
-      modificando las 14 variables de un estudiante o inyectando casos de borde como
-      <strong>A03</strong>. Usa el <code>b₀</code> calibrado de la simulación activa.
-    </p>
-    <div class="tarjeta">
-      <div class="acciones-whatif">
-        <span class="etiqueta-presets">Perfiles rápidos:</span>
-        <button type="button" class="btn-secundario btn-chico" data-preset="intermedio">Estudiante típico</button>
-        <button type="button" class="btn-secundario btn-chico" data-preset="sin_riesgo">Sin riesgo</button>
-        <button type="button" class="btn-secundario btn-chico" data-preset="financiero">Crisis financiera</button>
-        <button type="button" class="btn-secundario btn-chico" data-preset="todo_alto">Riesgo extremo (4 dim.)</button>
-        <button type="button" class="btn-secundario btn-chico" data-preset="a03">Contradicción A03 (Paso 1)</button>
-        <button type="button" class="btn-secundario btn-chico" data-preset="perdidas_5">Promedio 5.0 con pérdidas (Paso 1)</button>
-      </div>
-      <div class="rejilla-whatif" id="form-whatif">
-        <div class="bloque-detalle">
-          <h4 style="color:var(--academica)">Dimensión Académica</h4>
-          <label>Promedio (0.0 – 5.0)
-            <input type="number" id="wi-promedio" value="3.2" min="0" max="5" step="0.1">
-          </label>
-          <label>Materias perdidas (0 – 8)
-            <input type="number" id="wi-materias_perdidas" value="1" min="0" max="8" step="1">
-          </label>
-          <label>Asistencia % (0 – 100)
-            <input type="number" id="wi-asistencia_pct" value="82" min="0" max="100" step="1">
-          </label>
-          <label>Semestre (1 – 12)
-            <input type="number" id="wi-semestre" value="4" min="1" max="12" step="1">
-          </label>
-        </div>
-        <div class="bloque-detalle">
-          <h4 style="color:var(--financiera)">Dimensión Financiera</h4>
-          <label>Saldo pendiente COP (0 – 20.000.000)
-            <input type="number" id="wi-saldo_pendiente_cop" value="4000000" min="0" max="20000000" step="250000">
-          </label>
-          <label>Ingreso hogar SMMLV (0 – 20)
-            <input type="number" id="wi-ingreso_hogar_smmlv" value="2.0" min="0" max="20" step="0.2">
-          </label>
-          <label>Estrato (1 – 6)
-            <input type="number" id="wi-estrato" value="2" min="1" max="6" step="1">
-          </label>
-          <label>Tiene apoyo financiero
-            <select id="wi-tiene_apoyo_financiero">
-              <option value="false">No</option>
-              <option value="true">Sí</option>
-            </select>
-          </label>
-        </div>
-        <div class="bloque-detalle">
-          <h4 style="color:var(--laboral)">Dimensión Laboral</h4>
-          <label>Horas de trabajo / semana (0 – 60)
-            <input type="number" id="wi-horas_trabajo_semana" value="24" min="0" max="60" step="2">
-          </label>
-          <label>Trabaja en su área de estudio
-            <select id="wi-trabaja_en_area_de_estudio">
-              <option value="false">No</option>
-              <option value="true">Sí</option>
-            </select>
-          </label>
-        </div>
-        <div class="bloque-detalle">
-          <h4 style="color:var(--personal)">Dimensión Personal</h4>
-          <label>Tiempo desplazamiento min (0 – 240)
-            <input type="number" id="wi-tiempo_desplazamiento_min" value="60" min="0" max="240" step="10">
-          </label>
-          <label>Personas a cargo (0 – 6)
-            <input type="number" id="wi-personas_a_cargo" value="1" min="0" max="6" step="1">
-          </label>
-          <label>Apoyo familiar (1 – 5)
-            <input type="number" id="wi-apoyo_familiar" value="3" min="1" max="5" step="1">
-          </label>
-          <label>Primera generación universitaria
-            <select id="wi-primera_generacion_universitaria">
-              <option value="true">Sí</option>
-              <option value="false">No</option>
-            </select>
-          </label>
+    <!-- =================== PESTAÑA 2: SIMULADOR WHAT-IF =================== -->
+    <section id="panel-whatif" class="panel-vista" role="tabpanel">
+      <div class="cabecera-seccion-vista">
+        <div>
+          <h2>Simulador individual y planificador de acompañamiento (What-If)</h2>
+          <p class="texto-suave">
+            Conectado directamente al motor oficial en Python (<code>POST /api/evaluar</code>): aplica el contrato del Paso 1,
+            calcula <code>p</code> con su intervalo de incertidumbre <strong>P5–P95</strong> y compara el efecto real de acompañar a un estudiante.
+          </p>
         </div>
       </div>
+
+      <!-- Barra de perfiles rápidos + contexto de estudiante cargado -->
+      <div class="tarjeta barra-presets-whatif">
+        <div class="grupo-presets">
+          <span class="etiqueta-presets">Perfiles de prueba:</span>
+          <button type="button" class="btn-secundario btn-chico" data-preset="intermedio">Estudiante típico</button>
+          <button type="button" class="btn-secundario btn-chico" data-preset="sin_riesgo">Sin riesgo</button>
+          <button type="button" class="btn-secundario btn-chico" data-preset="financiero">Crisis financiera</button>
+          <button type="button" class="btn-secundario btn-chico" data-preset="todo_alto">Riesgo extremo (Tutoría)</button>
+          <button type="button" class="btn-secundario btn-chico btn-alerta-suave" data-preset="a03">Caso A03 (Paso 1)</button>
+          <button type="button" class="btn-secundario btn-chico btn-alerta-suave" data-preset="perdidas_5">Promedio 5.0 + pérdidas (Paso 1)</button>
+        </div>
+
+        <div id="barra-base-whatif" class="barra-base-whatif" hidden>
+          <div class="texto-base-whatif">
+            Comparando contra perfil base: <strong id="etiqueta-base-whatif">—</strong>
+          </div>
+          <div class="botones-base-whatif">
+            <button type="button" id="btn-aplicar-intervencion-wi" class="btn-primario btn-chico">
+              ✨ Simular efecto de apoyo institucional
+            </button>
+            <button type="button" id="btn-restaurar-base-wi" class="btn-secundario btn-chico">Restaurar original</button>
+            <button type="button" id="btn-quitar-base-wi" class="btn-texto">Salir de comparación ✕</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="layout-whatif">
+        <!-- Columna izquierda: controles deslizantes por dimensión -->
+        <div class="controles-whatif" id="form-whatif">
+          <div class="tarjeta bloque-dim-wi dim-borde-academica">
+            <h4>Dimensión Académica <small>bA = 3.0</small></h4>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Promedio acumulado</span><span class="rango-wi">0.0 – 5.0</span></div>
+              <div class="fila-slider"><input type="range" data-sync="wi-promedio" min="0" max="5" step="0.05" value="3.2"><input type="number" id="wi-promedio" value="3.2" step="0.1"></div>
+            </div>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Materias perdidas</span><span class="rango-wi">0 – 8 (satura en 3)</span></div>
+              <div class="fila-slider"><input type="range" data-sync="wi-materias_perdidas" min="0" max="8" step="1" value="1"><input type="number" id="wi-materias_perdidas" value="1" step="1"></div>
+            </div>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Asistencia a clase (%)</span><span class="rango-wi">0 – 100%</span></div>
+              <div class="fila-slider"><input type="range" data-sync="wi-asistencia_pct" min="0" max="100" step="1" value="82"><input type="number" id="wi-asistencia_pct" value="82" step="1"></div>
+            </div>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Semestre actual</span><span class="rango-wi">1 – 12</span></div>
+              <div class="fila-slider"><input type="range" data-sync="wi-semestre" min="1" max="12" step="1" value="4"><input type="number" id="wi-semestre" value="4" step="1"></div>
+            </div>
+          </div>
+
+          <div class="tarjeta bloque-dim-wi dim-borde-financiera">
+            <h4>Dimensión Financiera <small>bF = 2.5</small></h4>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Saldo pendiente (COP)</span><span class="rango-wi">satura en $8M</span></div>
+              <div class="fila-slider"><input type="range" data-sync="wi-saldo_pendiente_cop" min="0" max="20000000" step="250000" value="4000000"><input type="number" id="wi-saldo_pendiente_cop" value="4000000" step="250000"></div>
+            </div>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Ingreso hogar (SMMLV)</span><span class="rango-wi">0 riesgo ≥ 4.0</span></div>
+              <div class="fila-slider"><input type="range" data-sync="wi-ingreso_hogar_smmlv" min="0" max="20" step="0.1" value="2.0"><input type="number" id="wi-ingreso_hogar_smmlv" value="2.0" step="0.1"></div>
+            </div>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Estrato socioeconómico</span><span class="rango-wi">1 – 6</span></div>
+              <div class="fila-slider"><input type="range" data-sync="wi-estrato" min="1" max="6" step="1" value="2"><input type="number" id="wi-estrato" value="2" step="1"></div>
+            </div>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Tiene apoyo financiero / beca</span></div>
+              <select id="wi-tiene_apoyo_financiero">
+                <option value="false">No tiene apoyo</option>
+                <option value="true">Sí cuenta con apoyo / beca</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="tarjeta bloque-dim-wi dim-borde-laboral">
+            <h4>Dimensión Laboral <small>bL = 1.5</small></h4>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Horas de trabajo / semana</span><span class="rango-wi">satura en 40h</span></div>
+              <div class="fila-slider"><input type="range" data-sync="wi-horas_trabajo_semana" min="0" max="60" step="1" value="24"><input type="number" id="wi-horas_trabajo_semana" value="24" step="1"></div>
+            </div>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Relación con área de estudio</span></div>
+              <select id="wi-trabaja_en_area_de_estudio">
+                <option value="false">No trabaja en su área</option>
+                <option value="true">Sí trabaja en su área</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="tarjeta bloque-dim-wi dim-borde-personal">
+            <h4>Dimensión Personal <small>bP = 1.2</small></h4>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Desplazamiento al campus (min)</span><span class="rango-wi">satura en 120m</span></div>
+              <div class="fila-slider"><input type="range" data-sync="wi-tiempo_desplazamiento_min" min="0" max="240" step="5" value="60"><input type="number" id="wi-tiempo_desplazamiento_min" value="60" step="5"></div>
+            </div>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Personas a cargo</span><span class="rango-wi">0 – 6 (satura en 3)</span></div>
+              <div class="fila-slider"><input type="range" data-sync="wi-personas_a_cargo" min="0" max="6" step="1" value="1"><input type="number" id="wi-personas_a_cargo" value="1" step="1"></div>
+            </div>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Apoyo familiar percibido</span><span class="rango-wi">1 bajo – 5 alto</span></div>
+              <div class="fila-slider"><input type="range" data-sync="wi-apoyo_familiar" min="1" max="5" step="1" value="3"><input type="number" id="wi-apoyo_familiar" value="3" step="1"></div>
+            </div>
+            <div class="control-wi">
+              <div class="etiqueta-wi"><span>Primera generación universitaria</span></div>
+              <select id="wi-primera_generacion_universitaria">
+                <option value="true">Sí (primera generación)</option>
+                <option value="false">No</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Columna derecha sticky: diagnóstico en tiempo real -->
+        <div class="resultado-whatif-sticky">
+          <div id="resultado-whatif" class="tarjeta" aria-live="polite">
+            <p class="vacio">Evaluando perfil…</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =================== PESTAÑA 3: VALIDACIÓN DEL MODELO =================== -->
+    <section id="panel-validacion" class="panel-vista" role="tabpanel">
+      <div class="cabecera-seccion-vista">
+        <div>
+          <h2>Validación matemática, de sensibilidad y empírica</h2>
+          <p class="texto-suave">
+            Todas las pruebas se recalculan sobre la corrida activa para sustentar por qué el modelo es coherente, calibrado y predictivo.
+          </p>
+        </div>
+      </div>
+      <div id="validacion" class="contenedor-validacion">
+        <p class="vacio">Todavía no hay simulación cargada.</p>
+      </div>
+    </section>
+
+    <!-- =================== PESTAÑA 4: HISTORIAL SQLITE =================== -->
+    <section id="panel-historial" class="panel-vista" role="tabpanel">
+      <div class="cabecera-seccion-vista">
+        <div>
+          <h2>Historial persistente de simulaciones (SQLite)</h2>
+          <p class="texto-suave">
+            Guardadas en <code>data/simulador.db</code>. Pulsa cualquier corrida para restaurar sus parámetros, gráficas y cohorte completa.
+          </p>
+        </div>
+      </div>
+      <div class="tarjeta envoltorio-tabla">
+        <table id="tabla-historial" class="tabla-datos">
+          <thead>
+            <tr>
+              <th scope="col">ID</th>
+              <th scope="col">Fuente / Escenario</th>
+              <th scope="col">Fecha</th>
+              <th scope="col">n</th>
+              <th scope="col">Semilla</th>
+              <th scope="col">Tasa base</th>
+              <th scope="col">b₀ calibrado</th>
+              <th scope="col">Índice medio</th>
+              <th scope="col">% Alto</th>
+              <th scope="col">% Intervención</th>
+              <th scope="col">Revisión</th>
+            </tr>
+          </thead>
+          <tbody id="cuerpo-historial"></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ======================= INSPECTOR LATERAL DE ESTUDIANTE ======================= -->
+  <div id="velo-inspector" class="velo-inspector" hidden></div>
+  <aside id="inspector-estudiante" class="inspector-lateral" aria-label="Diagnóstico individual del estudiante" hidden>
+    <div class="inspector-barra-sup">
+      <div class="nav-inspector">
+        <button type="button" id="btn-est-ant" class="btn-secundario btn-chico" title="Estudiante anterior (↑)">↑ Ant.</button>
+        <button type="button" id="btn-est-sig" class="btn-secundario btn-chico" title="Siguiente estudiante (↓)">Sig. ↓</button>
+        <span id="posicion-inspector" class="pos-inspector"></span>
+      </div>
+      <button type="button" id="btn-cerrar-inspector" class="btn-icono" aria-label="Cerrar panel de detalle (Esc)" title="Cerrar (Esc)">✕</button>
     </div>
-    <div id="resultado-whatif" class="tarjeta detalle" aria-live="polite"></div>
-  </div>
+    <div id="contenido-inspector" class="inspector-cuerpo"></div>
+  </aside>
 
-  <!-- ============================== VALIDACIÓN ============================== -->
-  <div id="panel-validacion" class="panel" role="tabpanel">
-    <h2 class="titulo-seccion">5. Validación del modelo</h2>
-    <p class="nota ancho-total">
-      Las cuatro comprobaciones que hacen defendible el modelo. Se calculan con
-      los datos de la corrida actual, no están escritas a mano.
-    </p>
-    <div id="validacion">
-      <p class="vacio">Todavía no hay simulación.</p>
-    </div>
-  </div>
-
-  <!-- ============================== HISTORIAL ============================== -->
-  <div id="panel-historial" class="panel" role="tabpanel">
-    <h2 class="titulo-seccion">6. Historial de simulaciones guardadas</h2>
-    <p class="nota">Todo queda en SQLite (<code>data/simulador.db</code>), así que
-       las simulaciones siguen disponibles al reiniciar el servidor.
-       Pulsa una fila para volver a abrirla.</p>
-    <div class="tarjeta envoltorio-tabla">
-      <table id="tabla-historial">
-        <thead>
-          <tr>
-            <th scope="col">#</th>
-            <th scope="col">Origen / Dataset</th>
-            <th scope="col">Fecha</th>
-            <th scope="col">n</th>
-            <th scope="col">Semilla</th>
-            <th scope="col">Tasa base</th>
-            <th scope="col">b₀</th>
-            <th scope="col">Índice general</th>
-            <th scope="col">% alto</th>
-            <th scope="col">% intervención</th>
-            <th scope="col">Revisión</th>
-          </tr>
-        </thead>
-        <tbody id="cuerpo-historial"></tbody>
-      </table>
-    </div>
-  </div>
-
-</main>
-
+  <!-- ======================= PIE DE PÁGINA ======================= -->
   <footer class="pie">
-    <div class="contenedor">
+    <div class="contenedor pie-interior">
       <p>
-        Soporta tanto <strong>cohorte sintética</strong> como el <strong>dataset real UCI</strong>
-        (Realinho et al., 4.424 estudiantes). El modelo de riesgo es una regresión logística con coeficientes
-        <span class="marca">[SUPUESTO]</span> de juicio experto; la tasa base oficial verificada en
-        <strong>SPADIES 3.0 (MEN, 2024)</strong> para nivel universitario es TDA = 8,65%
-        (equivalente a <strong>4,42% semestral</strong>). Los resultados se presentan con intervalo P5–P95.
+        <strong>Portal de Acompañamiento · Universidad Católica de Colombia.</strong>
+        Modelo de regresión logística sobre 4 dimensiones (Tinto, 1975; Bean &amp; Metzner, 1985) con calibración exacta por bisección e incertidumbre P5–P95 por Montecarlo.
+        Tasa oficial universitaria verificada en <strong>SPADIES 3.0 (MEN, 2024)</strong>: TDA 8,65% (<strong>4,42% semestral</strong>).
+        Validación empírica sobre dataset público <strong>UCI (Realinho et al., 2022)</strong>: <strong>AUC–ROC = 0,8936</strong>.
       </p>
     </div>
   </footer>
 
-<script src="/static/app.js"></script>
+  <script src="/static/app.js"></script>
 </body>
 </html>

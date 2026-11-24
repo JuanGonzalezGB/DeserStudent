@@ -1,14 +1,15 @@
-/* Simulador de desercion - interfaz.
+/* ==========================================================================
+ * Simulador de probabilidad de deserción — Frontend Analítico
  *
- * JavaScript propio, sin frameworks ni librerias externas: las graficas se
- * construyen como SVG en linea, asi que la pagina funciona sin internet.
- *
- * Flujo:
- *   POST /api/simulaciones  -> corre y guarda una simulacion
- *   GET  /api/simulaciones/<id>/estudiantes?... -> tabla con filtros
- *   GET  /api/estudiantes/<id> -> panel de detalle
- *   GET  /api/simulaciones -> historial
- */
+ * Arquitectura limpia:
+ *   - Cero duplicación de fórmulas: el What-If consulta POST /api/evaluar
+ *     y los metadatos vienen de GET /api/config.
+ *   - Tabla paginada con delegación de eventos única (soporta 5.000 filas sin lag).
+ *   - Inspector lateral (Master-Detail) con navegación ↑/↓/Esc, Radar 4D y
+ *     Cascada del Logit en SVG.
+ *   - Validación visual con Curva ROC empírica, Matriz de Confusión 2×2,
+ *     Diagrama de Tornado (±50%) y Sparklines de Monotonía.
+ * ========================================================================== */
 "use strict";
 
 const DIMENSIONES = ["academica", "financiera", "laboral", "personal"];
@@ -19,29 +20,33 @@ const NOMBRE_DIM = {
   personal: "Personal"
 };
 const COLOR_DIM = {
-  academica: "#1f6feb",
+  academica: "#2563eb",
   financiera: "#d97706",
   laboral: "#7c3aed",
-  personal: "#0f9b8e"
+  personal: "#0d9488"
 };
-const COLOR_NIVEL = { bajo: "#2e7d58", medio: "#b8860b", alto: "#b3332c" };
+const COLOR_NIVEL = {
+  bajo: "#059669",
+  medio: "#d97706",
+  alto: "#dc2626",
+  revision: "#64748b"
+};
 
-// Etiquetas legibles de los campos de la entrada E, por dimension.
 const CAMPOS_DIM = {
   academica: [
-    ["promedio", "Promedio"],
+    ["promedio", "Promedio (0–5)"],
     ["materias_perdidas", "Materias perdidas"],
     ["asistencia_pct", "Asistencia (%)"],
     ["semestre", "Semestre"]
   ],
   financiera: [
-    ["saldo_pendiente_cop", "Saldo pendiente (COP)"],
-    ["ingreso_hogar_smmlv", "Ingreso hogar (SMMLV)"],
+    ["saldo_pendiente_cop", "Saldo pendiente"],
+    ["ingreso_hogar_smmlv", "Ingreso (SMMLV)"],
     ["estrato", "Estrato"],
-    ["tiene_apoyo_financiero", "Tiene apoyo financiero"]
+    ["tiene_apoyo_financiero", "Apoyo financiero"]
   ],
   laboral: [
-    ["horas_trabajo_semana", "Horas de trabajo / semana"],
+    ["horas_trabajo_semana", "Horas trabajo/sem."],
     ["trabaja_en_area_de_estudio", "Trabaja en su área"]
   ],
   personal: [
@@ -52,998 +57,11 @@ const CAMPOS_DIM = {
   ]
 };
 
-// Estado de la pagina: la simulacion que se esta mirando.
-let simulacionActual = null;
-let estudianteSeleccionado = null;
-let estudiantesCargados = [];
-
-/* ------------------------------------------------------------ utiles -- */
-const $ = (sel) => document.querySelector(sel);
-
-function escapar(texto) {
-  const div = document.createElement("div");
-  div.textContent = texto == null ? "" : String(texto);
-  return div.innerHTML;
-}
-
-const pct = (x, dec = 1) => (100 * x).toFixed(dec) + "%";
-const num = (x, dec = 3) => Number(x).toFixed(dec);
-
-function cop(valor) {
-  return "$ " + Math.round(valor).toLocaleString("es-CO");
-}
-
-function valorLegible(campo, valor) {
-  if (typeof valor === "boolean") return valor ? "Sí" : "No";
-  if (valor === null || valor === undefined) return "(vacío)";
-  if (campo === "saldo_pendiente_cop") return cop(valor);
-  return String(valor);
-}
-
-async function pedir(url, opciones) {
-  const respuesta = await fetch(url, opciones);
-  let cuerpo = null;
-  try {
-    cuerpo = await respuesta.json();
-  } catch (e) {
-    throw new Error("El servidor respondió algo que no es JSON (HTTP " +
-                    respuesta.status + ")");
-  }
-  if (!respuesta.ok) {
-    throw new Error(cuerpo && cuerpo.error ? cuerpo.error :
-                    "Error HTTP " + respuesta.status);
-  }
-  return cuerpo;
-}
-
-function estado(mensaje, clase) {
-  const el = $("#estado");
-  el.textContent = mensaje;
-  el.className = "estado" + (clase ? " " + clase : "");
-}
-
-/* ======================================================== 1. SIMULAR == */
 const MODOS_SIMULACION = {
   referencia: { origen: "sintetica", n: 500, semilla: 42, tasa_base: 0.09, k_montecarlo: 1000 },
   spadies:    { origen: "sintetica", n: 500, semilla: 42, tasa_base: 0.0442, k_montecarlo: 1000 },
-  uci_500:    { origen: "uci", n: 500, semilla: 42, tasa_base: 0.0442, k_montecarlo: 300 },
-  uci_full:   { origen: "uci", n: 3630, semilla: 42, tasa_base: 0.3915, k_montecarlo: 200 }
-};
-
-function sincronizarVistaFuente(origen, n, tasa) {
-  const esReal = origen === "uci";
-  const fichaReal = $("#ficha-dataset-real");
-  const acordeon = $("#acordeon-parametros");
-  const summary = $("#summary-parametros");
-  const campoSemilla = $("#campo-semilla");
-  const ayudaN = $("#ayuda-n");
-
-  if (fichaReal) fichaReal.hidden = !esReal;
-  if (campoSemilla) campoSemilla.style.display = esReal ? "none" : "";
-  if (ayudaN) {
-    ayudaN.textContent = esReal
-      ? "Filas a leer del CSV real (máx. 3.630 cerrados)"
-      : "Tamaño de la cohorte sintética a generar";
-  }
-  if (esReal) {
-    if (acordeon) acordeon.open = false;
-    if (summary) summary.textContent = "Opciones avanzadas de evaluación del dataset (umbrales y K)";
-    if ($("#ficha-real-n")) {
-      $("#ficha-real-n").textContent = n >= 3630
-        ? "3.630 estudiantes reales con desenlace cerrado (1.421 Dropout · 2.209 Graduate)"
-        : n + " primeros registros reales del archivo CSV de UCI";
-    }
-    if ($("#ficha-real-tasa")) {
-      $("#ficha-real-tasa").textContent = Math.abs(tasa - 0.3915) < 0.005
-        ? "39,15% (tasa real observada en el dataset UCI)"
-        : Math.abs(tasa - 0.0442) < 0.002
-          ? "4,42% (tasa oficial semestral SPADIES 3.0 Colombia)"
-          : pct(tasa, 2);
-    }
-  } else {
-    if (acordeon) acordeon.open = true;
-    if (summary) summary.textContent = "Parámetros de generación de la cohorte sintética (personalizar)";
-  }
-
-  // Marcar cuál de las 4 tarjetas superiores coincide
-  document.querySelectorAll("[data-modo-sim]").forEach((btn) => {
-    const cfg = MODOS_SIMULACION[btn.dataset.modoSim];
-    const coincide = cfg &&
-      cfg.origen === (origen || "sintetica") &&
-      Number(n) === cfg.n &&
-      Math.abs(Number(tasa) - cfg.tasa_base) < 0.001;
-    btn.classList.toggle("activa", Boolean(coincide));
-  });
-}
-
-if ($("#origen")) {
-  $("#origen").addEventListener("change", () => {
-    sincronizarVistaFuente(
-      $("#origen").value,
-      Number($("#n").value),
-      Number($("#tasa_base").value)
-    );
-  });
-}
-
-if ($("#btn-ejecutar-real")) {
-  $("#btn-ejecutar-real").addEventListener("click", () => {
-    $("#form-simular").requestSubmit();
-  });
-}
-
-document.querySelectorAll("[data-modo-sim]").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    const cfg = MODOS_SIMULACION[btn.dataset.modoSim];
-    if (!cfg) return;
-    if ($("#origen")) $("#origen").value = cfg.origen;
-    $("#n").value = cfg.n;
-    $("#semilla").value = cfg.semilla;
-    $("#tasa_base").value = cfg.tasa_base;
-    $("#k_montecarlo").value = cfg.k_montecarlo;
-    sincronizarVistaFuente(cfg.origen, cfg.n, cfg.tasa_base);
-    $("#form-simular").requestSubmit();
-  });
-});
-
-$("#form-simular").addEventListener("submit", async (evento) => {
-  evento.preventDefault();
-  const boton = $("#btn-simular");
-  boton.disabled = true;
-  estado("Simulando…");
-
-  const cuerpo = {
-    n: Number($("#n").value),
-    semilla: Number($("#semilla").value),
-    tasa_base: Number($("#tasa_base").value),
-    umbral_medio: Number($("#umbral_medio").value),
-    umbral_alto: Number($("#umbral_alto").value),
-    k_montecarlo: Number($("#k_montecarlo").value)
-  };
-  if ($("#origen") && $("#origen").value === "uci") {
-    cuerpo.origen = "uci";
-  }
-
-  try {
-    const simulacion = await pedir("/api/simulaciones", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(cuerpo)
-    });
-    simulacionActual = simulacion;
-    pintarSimulacion(simulacion);
-    await cargarEstudiantes();
-    await cargarHistorial();
-    estado("Simulación #" + simulacion.id + " guardada.", "listo");
-  } catch (error) {
-    estado(error.message, "error");
-  } finally {
-    boton.disabled = false;
-  }
-});
-
-/* ======================================================= 2. PESTAÑAS == */
-document.querySelectorAll(".pestana").forEach((pestana) => {
-  pestana.addEventListener("click", () => {
-    document.querySelectorAll(".pestana").forEach((p) => {
-      p.classList.remove("activa");
-      p.setAttribute("aria-selected", "false");
-    });
-    document.querySelectorAll(".panel").forEach((p) => p.classList.remove("activo"));
-    pestana.classList.add("activa");
-    pestana.setAttribute("aria-selected", "true");
-    $("#" + pestana.dataset.panel).classList.add("activo");
-  });
-});
-
-/* ==================================================== 3. INDICADORES == */
-function pintarBannerContexto(sim) {
-  const banner = $("#banner-contexto");
-  if (!banner) return;
-  const p = sim.parametros;
-  const r = sim.resumen;
-  const esReal = p.origen === "uci";
-  const esSpadies = !esReal && Math.abs(p.tasa_base - 0.0442) < 0.001;
-
-  banner.className = "banner-contexto" +
-    (esReal ? " es-real" : esSpadies ? " es-spadies" : "");
-
-  if (esReal) {
-    const aucTxt = r.evaluacion_real
-      ? ` · <strong>AUC–ROC real = ${num(r.evaluacion_real.auc_roc, 4)}</strong>`
-      : "";
-    banner.innerHTML = `
-      <div>
-        <span class="insignia-fuente real">Viendo Dataset Real · Corrida #${sim.id}</span>
-        <div class="titulo-banner">Dataset: UCI — Predict Students' Dropout and Academic Success (Realinho et al., 2022)</div>
-        <div class="sub-banner">
-          Archivo: <code>data.csv</code> · <strong>${r.n_validos} estudiantes reales</strong> evaluados
-          (códigos <code>UCI-0001</code> a <code>UCI-${String(r.n_total).padStart(4, "0")}</code>) ·
-          Tasa de calibración: <strong>${pct(p.tasa_base, 2)}</strong>${aucTxt} ·
-          Tutorías académicas activadas: <strong>${r.problemas_por_dimension.academica}</strong>
-        </div>
-      </div>`;
-  } else if (esSpadies) {
-    banner.innerHTML = `
-      <div>
-        <span class="insignia-fuente spadies">Viendo Datos Simulados · Calibración Oficial MEN · Corrida #${sim.id}</span>
-        <div class="titulo-banner">Cohorte Sintética Calibrada con SPADIES 3.0 (MEN Colombia, 2024)</div>
-        <div class="sub-banner">
-          <strong>${r.n_total} estudiantes simulados</strong> (semilla ${p.semilla}, códigos <code>UNA-0001</code>…) ·
-          Calibrada a la Tasa de Deserción Anual universitaria oficial (8,65% anual → <strong>4,42% semestral</strong>)
-        </div>
-      </div>`;
-  } else {
-    banner.innerHTML = `
-      <div>
-        <span class="insignia-fuente sintetica">Viendo Datos Simulados · Referencia · Corrida #${sim.id}</span>
-        <div class="titulo-banner">Cohorte Sintética Generada por Montecarlo (Universidad Católica de Colombia)</div>
-        <div class="sub-banner">
-          <strong>${r.n_total} estudiantes simulados</strong> (semilla ${p.semilla}, códigos <code>UNA-0001</code>…) ·
-          Tasa base semestral: <strong>${pct(p.tasa_base, 2)}</strong> ·
-          <strong>${r.n_validos} válidos</strong> y <strong>${r.n_revision_humana} con errores inyectados</strong> para probar el Paso 1
-        </div>
-      </div>`;
-  }
-}
-
-function pintarSimulacion(sim) {
-  const r = sim.resumen;
-  const p = sim.parametros;
-
-  sincronizarVistaFuente(p.origen || "sintetica", p.n, p.tasa_base);
-  pintarBannerContexto(sim);
-
-  $("#indicadores").innerHTML = `
-    <div class="indicador">
-      <span class="etiqueta">Índice de riesgo general</span>
-      <span class="valor">${pct(r.indice_general, 2)}</span>
-      <span class="detalle-ind">Probabilidad media de la cohorte ·
-        tasa base ${pct(p.tasa_base, 1)} · b₀ = ${num(p.b0_calibrado, 4)}</span>
-    </div>
-    <div class="indicador bajo">
-      <span class="etiqueta">Riesgo bajo</span>
-      <span class="valor">${pct(r.pct_bajo / 100, 1)}</span>
-      <span class="detalle-ind">${r.conteo_nivel.bajo} estudiantes · p &lt; ${num(p.umbral_medio, 2)}</span>
-    </div>
-    <div class="indicador medio">
-      <span class="etiqueta">Riesgo medio</span>
-      <span class="valor">${pct(r.pct_medio / 100, 1)}</span>
-      <span class="detalle-ind">${r.conteo_nivel.medio} estudiantes · ${num(p.umbral_medio, 2)} ≤ p &lt; ${num(p.umbral_alto, 2)}</span>
-    </div>
-    <div class="indicador alto">
-      <span class="etiqueta">Riesgo alto</span>
-      <span class="valor">${pct(r.pct_alto / 100, 1)}</span>
-      <span class="detalle-ind">${r.conteo_nivel.alto} estudiantes · p ≥ ${num(p.umbral_alto, 2)}</span>
-    </div>
-    <div class="indicador">
-      <span class="etiqueta">Requieren intervención</span>
-      <span class="valor">${pct(r.pct_intervencion / 100, 1)}</span>
-      <span class="detalle-ind">${r.n_intervencion} de ${r.n_validos} estudiantes válidos</span>
-    </div>
-    <div class="indicador revision">
-      <span class="etiqueta">Revisión humana</span>
-      <span class="valor">${r.n_revision_humana}</span>
-      <span class="detalle-ind">No reciben probabilidad: el Paso 1 los rechazó</span>
-    </div>`;
-
-  dibujarHistograma(r.probabilidades || [], p);
-  dibujarContribucion(r.contribucion_promedio, r.subpuntaje_promedio, p);
-  pintarValidacion(sim);
-  evaluarWhatIf();
-}
-
-/* ================================================= 4. GRÁFICA: HISTO == */
-function dibujarHistograma(probabilidades, params) {
-  const destino = $("#grafica-histograma");
-  if (!probabilidades.length) {
-    destino.innerHTML = '<p class="vacio">Sin datos.</p>';
-    return;
-  }
-
-  const ancho = 560, alto = 280;
-  const margen = { arriba: 16, derecha: 14, abajo: 48, izquierda: 48 };
-  const anchoUtil = ancho - margen.izquierda - margen.derecha;
-  const altoUtil = alto - margen.arriba - margen.abajo;
-
-  const maxP = Math.max(...probabilidades);
-  const limite = Math.min(1, Math.max(0.4, Math.ceil(maxP * 11) / 10));
-  const nBins = 22;
-  const anchoBin = limite / nBins;
-
-  const bins = new Array(nBins).fill(0);
-  probabilidades.forEach((p) => {
-    let i = Math.floor(p / anchoBin);
-    if (i >= nBins) i = nBins - 1;
-    if (i < 0) i = 0;
-    bins[i] += 1;
-  });
-  const maxBin = Math.max(...bins);
-
-  const x = (valor) => margen.izquierda + (valor / limite) * anchoUtil;
-  const y = (conteo) => margen.arriba + altoUtil - (conteo / maxBin) * altoUtil;
-
-  let svg = `<svg viewBox="0 0 ${ancho} ${alto}" role="img"
-      aria-label="Histograma de probabilidades de deserción">`;
-
-  // Rejilla horizontal y eje Y
-  const pasosY = 4;
-  for (let i = 0; i <= pasosY; i++) {
-    const conteo = (maxBin / pasosY) * i;
-    const py = y(conteo);
-    svg += `<line x1="${margen.izquierda}" y1="${py}" x2="${ancho - margen.derecha}" y2="${py}"
-             stroke="#e8edf4" stroke-width="1"/>`;
-    svg += `<text x="${margen.izquierda - 8}" y="${py + 4}" font-size="11" fill="#5b6879"
-             text-anchor="end">${Math.round(conteo)}</text>`;
-  }
-
-  // Barras, coloreadas por el nivel al que pertenece el centro del bin
-  bins.forEach((conteo, i) => {
-    if (!conteo) return;
-    const centro = (i + 0.5) * anchoBin;
-    const nivel = centro >= params.umbral_alto ? "alto"
-                : centro >= params.umbral_medio ? "medio" : "bajo";
-    const bx = x(i * anchoBin);
-    const bw = Math.max(1, x((i + 1) * anchoBin) - bx - 1.5);
-    const by = y(conteo);
-    svg += `<rect x="${bx}" y="${by}" width="${bw}" height="${margen.arriba + altoUtil - by}"
-             fill="${COLOR_NIVEL[nivel]}" opacity="0.85">
-             <title>${conteo} estudiante(s) con p entre ${num(i * anchoBin, 3)} y ${num((i + 1) * anchoBin, 3)}</title>
-            </rect>`;
-  });
-
-  // Líneas de umbral
-  [["umbral_medio", params.umbral_medio, "medio"],
-   ["umbral_alto", params.umbral_alto, "alto"]].forEach(([clave, valor, etq]) => {
-    if (valor > limite) return;
-    const px = x(valor);
-    svg += `<line x1="${px}" y1="${margen.arriba}" x2="${px}" y2="${margen.arriba + altoUtil}"
-             stroke="${COLOR_NIVEL[etq]}" stroke-width="1.5" stroke-dasharray="5 3"/>`;
-    svg += `<text x="${px + 4}" y="${margen.arriba + 12}" font-size="10.5"
-             fill="${COLOR_NIVEL[etq]}" font-weight="600">${etq} ${num(valor, 2)}</text>`;
-  });
-
-  // Eje X
-  svg += `<line x1="${margen.izquierda}" y1="${margen.arriba + altoUtil}"
-           x2="${ancho - margen.derecha}" y2="${margen.arriba + altoUtil}"
-           stroke="#aab4c2" stroke-width="1"/>`;
-  const pasosX = 5;
-  for (let i = 0; i <= pasosX; i++) {
-    const valor = (limite / pasosX) * i;
-    const px = x(valor);
-    svg += `<text x="${px}" y="${margen.arriba + altoUtil + 17}" font-size="11"
-             fill="#5b6879" text-anchor="middle">${num(valor, 2)}</text>`;
-  }
-  svg += `<text x="${margen.izquierda + anchoUtil / 2}" y="${alto - 8}" font-size="11.5"
-           fill="#1b2430" text-anchor="middle">Probabilidad de deserción semestral (p)</text>`;
-  svg += `<text x="12" y="${margen.arriba + altoUtil / 2}" font-size="11.5" fill="#1b2430"
-           text-anchor="middle" transform="rotate(-90 12 ${margen.arriba + altoUtil / 2})">Estudiantes</text>`;
-  svg += "</svg>";
-
-  destino.innerHTML = svg;
-}
-
-/* ========================================== 5. GRÁFICA: CONTRIBUCIÓN == */
-function dibujarContribucion(contribuciones, subpuntajes, params) {
-  const destino = $("#grafica-contribucion");
-  if (!contribuciones) {
-    destino.innerHTML = '<p class="vacio">Sin datos.</p>';
-    return;
-  }
-
-  const ancho = 560, alto = 280;
-  const margen = { arriba: 18, derecha: 120, abajo: 48, izquierda: 96 };
-  const anchoUtil = ancho - margen.izquierda - margen.derecha;
-  const altoUtil = alto - margen.arriba - margen.abajo;
-
-  const orden = DIMENSIONES.slice().sort(
-    (a, b) => contribuciones[b] - contribuciones[a]);
-  const maxContrib = Math.max(...DIMENSIONES.map((d) => contribuciones[d]), 0.01);
-  const altoBarra = Math.min(38, altoUtil / orden.length - 12);
-  const paso = altoUtil / orden.length;
-
-  let svg = `<svg viewBox="0 0 ${ancho} ${alto}" role="img"
-      aria-label="Contribución promedio de cada dimensión al riesgo">`;
-
-  // Rejilla vertical
-  const pasosX = 4;
-  for (let i = 0; i <= pasosX; i++) {
-    const valor = (maxContrib / pasosX) * i;
-    const px = margen.izquierda + (valor / maxContrib) * anchoUtil;
-    svg += `<line x1="${px}" y1="${margen.arriba}" x2="${px}" y2="${margen.arriba + altoUtil}"
-             stroke="#e8edf4" stroke-width="1"/>`;
-    svg += `<text x="${px}" y="${margen.arriba + altoUtil + 17}" font-size="11"
-             fill="#5b6879" text-anchor="middle">${num(valor, 2)}</text>`;
-  }
-
-  orden.forEach((dim, i) => {
-    const valor = contribuciones[dim];
-    const by = margen.arriba + i * paso + (paso - altoBarra) / 2;
-    const bw = Math.max(1, (valor / maxContrib) * anchoUtil);
-
-    svg += `<text x="${margen.izquierda - 10}" y="${by + altoBarra / 2 + 4}" font-size="12"
-             fill="#1b2430" text-anchor="end" font-weight="600">${NOMBRE_DIM[dim]}</text>`;
-    svg += `<rect x="${margen.izquierda}" y="${by}" width="${bw}" height="${altoBarra}"
-             fill="${COLOR_DIM[dim]}" opacity="0.88" rx="3">
-             <title>${NOMBRE_DIM[dim]}: contribución media ${num(valor, 4)} = b=${num(params.coeficientes[dim], 2)} × s̄=${num(subpuntajes[dim], 4)}</title>
-            </rect>`;
-    svg += `<text x="${margen.izquierda + bw + 8}" y="${by + altoBarra / 2 + 4}" font-size="11.5"
-             fill="#1b2430">${num(valor, 3)}
-             <tspan fill="#5b6879" font-size="10.5"> (b=${num(params.coeficientes[dim], 1)} · s̄=${num(subpuntajes[dim], 2)})</tspan></text>`;
-  });
-
-  svg += `<line x1="${margen.izquierda}" y1="${margen.arriba}" x2="${margen.izquierda}"
-           y2="${margen.arriba + altoUtil}" stroke="#aab4c2" stroke-width="1"/>`;
-  svg += `<text x="${margen.izquierda + anchoUtil / 2}" y="${alto - 8}" font-size="11.5"
-           fill="#1b2430" text-anchor="middle">Contribución media al logit (b_d · s_d)</text>`;
-  svg += "</svg>";
-
-  destino.innerHTML = svg;
-}
-
-/* ================================================ 6. TABLA ESTUDIANTES */
-["#f-nivel", "#f-intervencion", "#f-dimension", "#f-orden", "#f-revision"]
-  .forEach((sel) => $(sel).addEventListener("change", () => cargarEstudiantes()));
-
-if ($("#f-buscar")) {
-  $("#f-buscar").addEventListener("input", () => aplicarFiltroBusqueda());
-}
-if ($("#btn-exportar-csv")) {
-  $("#btn-exportar-csv").addEventListener("click", () => exportarCSV());
-}
-
-async function cargarEstudiantes() {
-  if (!simulacionActual) return;
-
-  const [orden, sentido] = $("#f-orden").value.split("|");
-  const parametros = new URLSearchParams();
-  if ($("#f-nivel").value) parametros.set("nivel", $("#f-nivel").value);
-  if ($("#f-intervencion").value) parametros.set("intervencion", $("#f-intervencion").value);
-  if ($("#f-dimension").value) parametros.set("dimension", $("#f-dimension").value);
-  if ($("#f-revision").checked) parametros.set("revision", "true");
-  parametros.set("orden", orden);
-  parametros.set("sentido", sentido);
-
-  try {
-    const datos = await pedir("/api/simulaciones/" + simulacionActual.id +
-                              "/estudiantes?" + parametros.toString());
-    estudiantesCargados = datos.estudiantes || [];
-    aplicarFiltroBusqueda();
-  } catch (error) {
-    estado(error.message, "error");
-  }
-}
-
-function obtenerEstudiantesFiltrados() {
-  const q = ($("#f-buscar") ? $("#f-buscar").value : "").trim().toLowerCase();
-  if (!q) return estudiantesCargados;
-  return estudiantesCargados.filter((e) =>
-    String(e.codigo || "").toLowerCase().includes(q)
-  );
-}
-
-function aplicarFiltroBusqueda() {
-  const filtrados = obtenerEstudiantesFiltrados();
-  pintarTabla(filtrados, filtrados.length);
-}
-
-function escaparCSV(valor) {
-  const texto = valor == null ? "" : String(valor);
-  if (texto.includes(",") || texto.includes('"') || texto.includes("\n")) {
-    return '"' + texto.replace(/"/g, '""') + '"';
-  }
-  return texto;
-}
-
-function exportarCSV() {
-  const lista = obtenerEstudiantesFiltrados();
-  if (!lista.length) {
-    estado("No hay estudiantes en la vista actual para exportar.", "error");
-    return;
-  }
-  const cabeceras = [
-    "codigo", "valido", "motivo_revision", "campo_revision",
-    "p", "p5", "p95", "nivel", "s_academico", "s_financiero",
-    "s_laboral", "s_personal", "factor_principal", "problemas",
-    "requiere_intervencion"
-  ];
-  const filas = [cabeceras.join(",")];
-  lista.forEach((e) => {
-    const r = e.resultado;
-    const fila = [
-      e.codigo,
-      e.valido ? "1" : "0",
-      e.motivo_revision || "",
-      e.campo_revision || "",
-      r ? num(r.p, 4) : "",
-      r ? num(r.p5, 4) : "",
-      r ? num(r.p95, 4) : "",
-      r ? r.nivel : "",
-      r ? num(r.subpuntajes.academica, 4) : "",
-      r ? num(r.subpuntajes.financiera, 4) : "",
-      r ? num(r.subpuntajes.laboral, 4) : "",
-      r ? num(r.subpuntajes.personal, 4) : "",
-      r ? r.factor_principal : "",
-      r ? r.problemas.join(";") : "",
-      r ? (r.requiere_intervencion ? "1" : "0") : ""
-    ];
-    filas.push(fila.map(escaparCSV).join(","));
-  });
-
-  const contenido = "\uFEFF" + filas.join("\r\n");
-  const blob = new Blob([contenido], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const enlace = document.createElement("a");
-  const idSim = simulacionActual ? simulacionActual.id : "ref";
-  enlace.href = url;
-  enlace.download = "simulacion_" + idSim + "_estudiantes.csv";
-  document.body.appendChild(enlace);
-  enlace.click();
-  document.body.removeChild(enlace);
-  URL.revokeObjectURL(url);
-  estado("CSV exportado (" + lista.length + " estudiantes).", "listo");
-}
-
-function pintarTabla(estudiantes, total) {
-  const esReal = simulacionActual && simulacionActual.parametros.origen === "uci";
-  const prefijo = esReal
-    ? "Mostrando registros del Dataset Real UCI (códigos UCI-xxxx)"
-    : "Mostrando estudiantes de la Cohorte Sintética (códigos UNA-xxxx)";
-  $("#caption-tabla").textContent =
-    prefijo + " · " + total + " estudiante(s) · pulsa una fila para ver el detalle";
-  if ($("#f-buscar")) {
-    $("#f-buscar").placeholder = esReal ? "Ej. UCI-0015" : "Ej. UNA-0025";
-  }
-
-  if (!estudiantes.length) {
-    $("#cuerpo-tabla").innerHTML =
-      '<tr><td colspan="10" class="vacio">Ningún estudiante cumple los filtros.</td></tr>';
-    return;
-  }
-
-  $("#cuerpo-tabla").innerHTML = estudiantes.map((est) => {
-    if (!est.resultado) {
-      return `<tr data-id="${est.id}">
-        <td>${escapar(est.codigo)}</td>
-        <td colspan="7" class="vacio">Sin probabilidad · ${escapar(est.motivo_revision)}
-            (${escapar(est.campo_revision)})</td>
-        <td><span class="insignia revision">Revisión</span></td>
-        <td class="no">Humana</td>
-      </tr>`;
-    }
-    const r = est.resultado;
-    const problemas = r.problemas.length
-      ? r.problemas.map((d) =>
-          `<span class="etiqueta-dim dim-${d}">${NOMBRE_DIM[d]}</span>`).join("")
-      : '<span class="no">—</span>';
-    return `<tr data-id="${est.id}">
-      <td>${escapar(est.codigo)}</td>
-      <td class="num">${num(r.p, 3)}
-          <small style="color:#5b6879">(${num(r.p5, 3)}–${num(r.p95, 3)})</small></td>
-      <td><span class="insignia ${r.nivel}">${r.nivel}</span></td>
-      <td class="num">${num(r.subpuntajes.academica, 2)}</td>
-      <td class="num">${num(r.subpuntajes.financiera, 2)}</td>
-      <td class="num">${num(r.subpuntajes.laboral, 2)}</td>
-      <td class="num">${num(r.subpuntajes.personal, 2)}</td>
-      <td><span class="etiqueta-dim dim-${r.factor_principal}">${NOMBRE_DIM[r.factor_principal]}</span></td>
-      <td>${problemas}</td>
-      <td>${r.requiere_intervencion
-            ? '<span class="si">Sí</span>'
-            : '<span class="no">No</span>'}</td>
-    </tr>`;
-  }).join("");
-
-  $("#cuerpo-tabla").querySelectorAll("tr[data-id]").forEach((fila) => {
-    fila.addEventListener("click", () => verDetalle(Number(fila.dataset.id)));
-  });
-}
-
-/* ====================================================== 7. DETALLE === */
-async function verDetalle(estudianteId) {
-  try {
-    const est = await pedir("/api/estudiantes/" + estudianteId);
-    estudianteSeleccionado = estudianteId;
-    document.querySelectorAll("#cuerpo-tabla tr").forEach((f) =>
-      f.classList.toggle("seleccionada", Number(f.dataset.id) === estudianteId));
-    pintarDetalle(est);
-    $("#detalle").scrollIntoView({ behavior: "smooth", block: "nearest" });
-  } catch (error) {
-    estado(error.message, "error");
-  }
-}
-
-function pintarDetalle(est) {
-  const panel = $("#detalle");
-  panel.hidden = false;
-
-  const datosPorDim = DIMENSIONES.map((dim) => `
-    <div class="bloque-detalle">
-      <h4 style="color:${COLOR_DIM[dim]}">${NOMBRE_DIM[dim]}</h4>
-      <ul class="lista-plana">
-        ${CAMPOS_DIM[dim].map(([campo, etiqueta]) => `
-          <li><span class="clave">${etiqueta}</span>
-              <span class="valor-dato">${escapar(valorLegible(campo, est.datos[campo]))}</span></li>`).join("")}
-      </ul>
-    </div>`).join("");
-
-  if (!est.resultado) {
-    panel.innerHTML = `
-      <div class="detalle-cabecera">
-        <div>
-          <h3>${escapar(est.codigo)}</h3>
-          <p class="nota">Paso 1: el registro no pasó la validación.</p>
-        </div>
-        <span class="insignia revision">Revisión humana</span>
-      </div>
-      <div class="aviso-revision">
-        <strong>No se calcula probabilidad.</strong>
-        Motivo: <code>${escapar(est.motivo_revision)}</code> en el campo
-        <code>${escapar(est.campo_revision)}</code>.
-        ${est.error_inyectado
-          ? "Este registro trae un error <em>inyectado a propósito</em> (" +
-            escapar(est.error_inyectado) + ") para demostrar que el Paso 1 funciona."
-          : ""}
-        El caso se remite a un asesor humano del comité de apoyo: el modelo
-        nunca inventa los datos que faltan.
-      </div>
-      <div class="rejilla-detalle">${datosPorDim}</div>`;
-    return;
-  }
-
-  const r = est.resultado;
-  const barras = DIMENSIONES.map((dim) => {
-    const s = r.subpuntajes[dim];
-    const esProblema = r.problemas.includes(dim);
-    return `
-      <div class="barra-dim ${esProblema ? "problema" : ""}">
-        <div class="fila-barra">
-          <span>${NOMBRE_DIM[dim]}${esProblema ? " ⚠" : ""}</span>
-          <span>s = ${num(s, 3)} · aporte ${num(r.contribuciones[dim], 3)}</span>
-        </div>
-        <div class="pista">
-          <div class="relleno" style="width:${(100 * s).toFixed(1)}%;
-               background:${COLOR_DIM[dim]}"></div>
-        </div>
-      </div>`;
-  }).join("");
-
-  const intervenciones = r.requiere_intervencion
-    ? r.intervenciones.map((i) => `
-        <div class="intervencion-item">
-          <span class="prioridad">Prioridad ${i.prioridad}</span>
-          <strong>${escapar(i.nombre)}</strong>
-          <div style="font-size:12px;color:#5b6879">
-            Dimensión ${NOMBRE_DIM[i.dimension]} · <code>${escapar(i.tipo)}</code></div>
-          <ul>${i.acciones.map((a) => `<li>${escapar(a)}</li>`).join("")}</ul>
-        </div>`).join("")
-    : `<p class="nota">No requiere intervención: nivel
-       <strong>${r.nivel}</strong>${r.problemas.length
-         ? " y, aunque tiene dimensiones problemáticas, el nivel no alcanza el criterio."
-         : " sin dimensiones problemáticas."}</p>`;
-
-  // Barra visual del intervalo P5-P95
-  const escala = Math.max(0.2, Math.min(1, r.p95 * 1.2));
-  const aPct = (v) => Math.max(0, Math.min(100, (v / escala) * 100));
-
-  panel.innerHTML = `
-    <div class="detalle-cabecera">
-      <div>
-        <h3>${escapar(est.codigo)}</h3>
-        <p class="nota">Factor principal:
-          <span class="etiqueta-dim dim-${r.factor_principal}">${NOMBRE_DIM[r.factor_principal]}</span>
-          · ${r.problemas.length} dimensión(es) problemática(s) (s ≥ 0,60)</p>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:30px;font-weight:700;color:${COLOR_NIVEL[r.nivel]}">${pct(r.p, 1)}</div>
-        <span class="insignia ${r.nivel}">Riesgo ${r.nivel}</span>
-      </div>
-    </div>
-
-    <div style="margin-top:14px">
-      <div style="font-size:12.5px;color:#5b6879;margin-bottom:5px">
-        Intervalo de incertidumbre P5–P95 (Montecarlo sobre los coeficientes,
-        K repeticiones): <strong>${pct(r.p5, 1)} – ${pct(r.p95, 1)}</strong>.
-        La estimación puntual es ${pct(r.p, 1)}; el modelo no se vende como exacto.
-      </div>
-      <div style="position:relative;height:22px;background:#e8edf4;border-radius:999px">
-        <div style="position:absolute;left:${aPct(r.p5)}%;width:${aPct(r.p95) - aPct(r.p5)}%;
-             top:0;height:100%;background:${COLOR_NIVEL[r.nivel]};opacity:.28;border-radius:999px"></div>
-        <div style="position:absolute;left:${aPct(r.p)}%;top:-3px;width:3px;height:28px;
-             background:${COLOR_NIVEL[r.nivel]};border-radius:2px"></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:11px;color:#5b6879">
-        <span>0%</span><span>${pct(escala, 0)}</span>
-      </div>
-    </div>
-
-    <div class="rejilla-detalle">
-      <div class="bloque-detalle">
-        <h4>Riesgo por dimensión</h4>
-        ${barras}
-      </div>
-      <div class="bloque-detalle">
-        <h4>Paso 3 · Intervención propuesta</h4>
-        ${intervenciones}
-      </div>
-    </div>
-
-    <div class="rejilla-detalle">${datosPorDim}</div>`;
-}
-
-/* ================================================== 8. VALIDACIÓN ==== */
-
-/* Convierte el {nivel, requiere_intervencion, problemas, ...} de un perfil de
- * referencia en algo que se pueda leer de un vistazo en la sustentación, en
- * vez de un JSON crudo. */
-function resumenPerfil(datos) {
-  if (!datos) return '<span class="no">—</span>';
-  const lineas = [];
-
-  if (datos.nivel) {
-    lineas.push(`<span class="insignia ${datos.nivel}">${datos.nivel}</span>`);
-  }
-  if (datos.requiere_intervencion !== undefined) {
-    lineas.push(datos.requiere_intervencion
-      ? '<span class="si">requiere intervención</span>'
-      : '<span class="no">sin intervención</span>');
-  }
-  if (datos.problemas) {
-    lineas.push(datos.problemas.length
-      ? "problemas: " + datos.problemas.map((d) =>
-          `<span class="etiqueta-dim dim-${d}">${NOMBRE_DIM[d]}</span>`).join("")
-      : '<span class="no">sin problemas</span>');
-  }
-  if (datos.intervencion_principal) {
-    lineas.push('<code style="font-size:11.5px">' +
-                escapar(datos.intervencion_principal) + "</code>");
-  }
-  return lineas.map((l) => `<div style="padding:1px 0">${l}</div>`).join("");
-}
-
-function pintarValidacion(sim) {
-  const v = sim.validacion_modelo;
-  const p = sim.parametros;
-  const veredicto = (ok) =>
-    `<span class="veredicto ${ok ? "pasa" : "falla"}">${ok ? "pasa" : "falla"}</span>`;
-
-  const cal = v.calibracion;
-  const sens = v.sensibilidad;
-  const cara = v.validez_de_cara;
-  const mono = v.monotonia;
-  const real = sim.resumen && sim.resumen.evaluacion_real;
-
-  const bloqueReal = real ? `
-    <div class="tarjeta" style="border-left:4px solid var(--bajo)">
-      <h3>Validación empírica contra desenlace real (Dataset UCI) ${veredicto(real.auc_roc >= 0.75)}</h3>
-      <p class="nota">Evaluación predictiva comparando las probabilidades calculadas por el
-        modelo contra el desenlace real observado (<code>Target = Dropout / Graduate</code>)
-        en <strong>${escapar(real.fuente)}</strong>.</p>
-      <ul class="lista-plana">
-        <li><span class="clave">Estudiantes reales evaluados (con desenlace cerrado)</span>
-            <span class="valor-dato">${real.n_evaluados} (${real.n_desertores_reales} desertores · ${real.n_graduados_reales} graduados)</span></li>
-        <li><span class="clave">Tasa de deserción acumulada observada en el dataset</span>
-            <span class="valor-dato">${pct(real.tasa_desercion_observada, 2)}</span></li>
-        <li><span class="clave">Área bajo la curva ROC (AUC–ROC, Mann-Whitney U)</span>
-            <span class="valor-dato"><strong>${num(real.auc_roc, 4)}</strong></span></li>
-        <li><span class="clave">Probabilidad media asignada a desertores reales</span>
-            <span class="valor-dato">${pct(real.p_media_desertores, 2)}</span></li>
-        <li><span class="clave">Probabilidad media asignada a graduados reales</span>
-            <span class="valor-dato">${pct(real.p_media_graduados, 2)}</span></li>
-        <li><span class="clave">Sensibilidad / Especificidad (al criterio de intervención)</span>
-            <span class="valor-dato">${pct(real.matriz_confusion.sensibilidad, 1)} / ${pct(real.matriz_confusion.especificidad, 1)} (Exactitud: ${pct(real.matriz_confusion.exactitud, 1)})</span></li>
-        <li><span class="clave">Tutorías académicas activadas (sA ≥ 0,60)</span>
-            <span class="valor-dato"><strong>${sim.resumen.problemas_por_dimension.academica}</strong> estudiantes</span></li>
-      </ul>
-    </div>` : "";
-
-  $("#validacion").innerHTML = `
-    ${bloqueReal}
-    <div class="tarjeta">
-      <h3>Calibración ${veredicto(cal.ok)}</h3>
-      <p class="nota">b₀ no se inventa: se despeja por bisección para que la
-        probabilidad media de la cohorte sea igual a la tasa base.</p>
-      <ul class="lista-plana">
-        <li><span class="clave">Tasa base (objetivo)</span>
-            <span class="valor-dato">${num(cal.tasa_base, 5)}</span></li>
-        <li><span class="clave">Probabilidad media obtenida</span>
-            <span class="valor-dato">${num(cal.media_obtenida, 5)}</span></li>
-        <li><span class="clave">Diferencia</span>
-            <span class="valor-dato">${num(cal.diferencia, 6)}</span></li>
-        <li><span class="clave">Margen aceptado</span>
-            <span class="valor-dato">± ${num(cal.margen, 3)}</span></li>
-        <li><span class="clave">b₀ calibrado</span>
-            <span class="valor-dato">${num(cal.b0_calibrado, 5)}</span></li>
-      </ul>
-      <p class="formula">p = 1 / (1 + exp(-(b₀ + ${num(p.coeficientes.academica, 1)}·sA + ${num(p.coeficientes.financiera, 1)}·sF + ${num(p.coeficientes.laboral, 1)}·sL + ${num(p.coeficientes.personal, 1)}·sP)))
-b₀ = ${num(cal.b0_calibrado, 5)}  (calibrado, no supuesto)</p>
-    </div>
-
-    <div class="tarjeta">
-      <h3>Sensibilidad a los coeficientes</h3>
-      <p class="nota">Cada coeficiente se mueve ±${pct(sens.variacion, 0)} y se mide
-        cuánto cambia el índice general (b₀ se deja fijo: si se recalibrara, el
-        índice volvería por construcción a la tasa base).
-        El supuesto más influyente es
-        <strong>${NOMBRE_DIM[sens.mas_influyente]}</strong>.</p>
-      <div class="envoltorio-tabla">
-        <table>
-          <thead><tr>
-            <th scope="col">Dimensión</th><th scope="col">b base</th>
-            <th scope="col">−50% → índice</th><th scope="col">Índice base</th>
-            <th scope="col">+50% → índice</th><th scope="col">Amplitud</th>
-          </tr></thead>
-          <tbody>
-            ${sens.filas.map((f) => `
-              <tr>
-                <td><span class="etiqueta-dim dim-${f.dimension}">${NOMBRE_DIM[f.dimension]}</span></td>
-                <td class="num">${num(f.coeficiente_base, 2)}</td>
-                <td class="num">${pct(f.indice_bajo, 2)}</td>
-                <td class="num">${pct(f.indice_base, 2)}</td>
-                <td class="num">${pct(f.indice_alto, 2)}</td>
-                <td class="num"><strong>${num(f.amplitud_pp, 2)} pp</strong></td>
-              </tr>`).join("")}
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="tarjeta">
-      <h3>Validez de cara ${veredicto(cara.ok)}</h3>
-      <p class="nota">Tres perfiles de referencia con el resultado esperado escrito
-        de antemano. Si un estudiante sin problemas saliera "alto", el modelo
-        estaría mal por mucho que calibre.</p>
-      <div class="envoltorio-tabla">
-        <table>
-          <thead><tr>
-            <th scope="col">Perfil</th>
-            <th scope="col">sA&nbsp;/&nbsp;sF&nbsp;/&nbsp;sL&nbsp;/&nbsp;sP</th>
-            <th scope="col">p</th><th scope="col">Esperado</th>
-            <th scope="col">Obtenido</th><th scope="col">¿Coincide?</th>
-          </tr></thead>
-          <tbody>
-            ${cara.perfiles.map((perfil) => `
-              <tr>
-                <td><strong>${escapar(perfil.nombre)}</strong>
-                    <div style="font-size:11.5px;color:#5b6879">${escapar(perfil.descripcion)}</div></td>
-                <td class="num" style="white-space:nowrap">${DIMENSIONES.map((d) => num(perfil.subpuntajes[d], 2)).join(" / ")}</td>
-                <td class="num">${num(perfil.p, 4)}</td>
-                <td>${resumenPerfil(perfil.esperado)}</td>
-                <td>${resumenPerfil(perfil.obtenido)}</td>
-                <td>${veredicto(perfil.coincide)}</td>
-              </tr>`).join("")}
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="tarjeta">
-      <h3>Monotonía ${veredicto(mono.ok)}</h3>
-      <p class="nota">Empeorar una variable de riesgo nunca debe bajar p.
-        Se comprobaron ${mono.n_variables} variables recorriendo sus valores de
-        mejor a peor.</p>
-      <div class="envoltorio-tabla">
-        <table>
-          <thead><tr>
-            <th scope="col">Variable</th><th scope="col">p en el mejor valor</th>
-            <th scope="col">p en el peor valor</th><th scope="col">Pasos</th>
-            <th scope="col">¿Monótona?</th>
-          </tr></thead>
-          <tbody>
-            ${mono.variables.map((f) => `
-              <tr>
-                <td><code>${escapar(f.variable)}</code></td>
-                <td class="num">${num(f.p_mejor, 4)}</td>
-                <td class="num">${num(f.p_peor, 4)}</td>
-                <td class="num">${f.pasos.length}</td>
-                <td>${veredicto(f.ok)}</td>
-              </tr>`).join("")}
-          </tbody>
-        </table>
-      </div>
-    </div>`;
-}
-
-/* =================================================== 9. HISTORIAL ==== */
-async function cargarHistorial() {
-  try {
-    const datos = await pedir("/api/simulaciones?limite=50");
-    const filas = datos.simulaciones;
-
-    if (!filas.length) {
-      $("#cuerpo-historial").innerHTML =
-        '<tr><td colspan="11" class="vacio">Todavía no hay simulaciones guardadas.</td></tr>';
-      return;
-    }
-
-    $("#cuerpo-historial").innerHTML = filas.map((s) => {
-      const esUci = s.origen === "uci";
-      const esSpadies = !esUci && Math.abs(s.tasa_base - 0.0442) < 0.001;
-      const etqOrigen = esUci
-        ? '<span class="insignia-fuente real">Dataset Real UCI</span>'
-        : esSpadies
-          ? '<span class="insignia-fuente spadies">Simulada · SPADIES</span>'
-          : '<span class="insignia-fuente sintetica">Simulada · Montecarlo</span>';
-      return `
-      <tr data-id="${s.id}">
-        <td><strong>#${s.id}</strong></td>
-        <td>${etqOrigen}</td>
-        <td>${escapar(s.fecha.replace("T", " "))}</td>
-        <td class="num">${s.n}</td>
-        <td class="num">${esUci ? "—" : s.semilla}</td>
-        <td class="num">${pct(s.tasa_base, 2)}</td>
-        <td class="num">${num(s.b0_calibrado, 3)}</td>
-        <td class="num"><strong>${pct(s.indice_general, 2)}</strong></td>
-        <td class="num">${num(s.pct_alto, 1)}%</td>
-        <td class="num">${num(s.pct_intervencion, 1)}%</td>
-        <td class="num">${s.n_revision_humana}</td>
-      </tr>`;
-    }).join("");
-
-    $("#cuerpo-historial").querySelectorAll("tr[data-id]").forEach((fila) => {
-      fila.addEventListener("click", () => abrirSimulacion(Number(fila.dataset.id)));
-    });
-  } catch (error) {
-    estado(error.message, "error");
-  }
-}
-
-async function abrirSimulacion(simulacionId) {
-  try {
-    const sim = await pedir("/api/simulaciones/" + simulacionId);
-    simulacionActual = sim;
-    if ($("#origen")) $("#origen").value = sim.parametros.origen || "sintetica";
-    $("#n").value = sim.parametros.n;
-    $("#semilla").value = sim.parametros.semilla;
-    $("#tasa_base").value = sim.parametros.tasa_base;
-    $("#umbral_medio").value = sim.parametros.umbral_medio;
-    $("#umbral_alto").value = sim.parametros.umbral_alto;
-    $("#k_montecarlo").value = sim.parametros.k_montecarlo;
-    $("#detalle").hidden = true;
-    pintarSimulacion(sim);
-    await cargarEstudiantes();
-    estado("Simulación #" + sim.id + " cargada desde la base de datos.", "listo");
-
-    document.querySelector('.pestana[data-panel="panel-resultados"]').click();
-  } catch (error) {
-    estado(error.message, "error");
-  }
-}
-
-/* ============================================= 9b. EVALUADOR WHAT-IF = */
-const CATALOGO_INTERVENCIONES = {
-  academica: {
-    tipo: "tutoria_academica",
-    nombre: "Tutoria academica",
-    acciones: [
-      "tutoria par en las materias perdidas",
-      "plan de recuperacion con el docente guia"
-    ]
-  },
-  financiera: {
-    tipo: "apoyo_financiero",
-    nombre: "Plan de apoyo financiero",
-    acciones: [
-      "reestructuracion de matricula en 4 cuotas sin intereses",
-      "beca de alimentacion",
-      "bono de transporte mensual"
-    ]
-  },
-  laboral: {
-    tipo: "flexibilidad_laboral",
-    nombre: "Flexibilidad horaria / jornada nocturna",
-    acciones: [
-      "reubicacion de horario de clases",
-      "oferta de asignaturas en jornada nocturna"
-    ]
-  },
-  personal: {
-    tipo: "bienestar_universitario",
-    nombre: "Acompanamiento de bienestar universitario",
-    acciones: [
-      "cita con bienestar universitario",
-      "red de apoyo entre pares"
-    ]
-  }
+  uci_full:   { origen: "uci", n: 3630, semilla: 42, tasa_base: 0.3915, k_montecarlo: 200 },
+  uci_500:    { origen: "uci", n: 500, semilla: 42, tasa_base: 0.0442, k_montecarlo: 300 }
 };
 
 const PRESETS_WHATIF = {
@@ -1091,256 +109,1828 @@ const PRESETS_WHATIF = {
   }
 };
 
-const RANGOS_WHATIF = {
-  promedio: [0.0, 5.0, false],
-  materias_perdidas: [0, 8, true],
-  asistencia_pct: [0.0, 100.0, false],
-  semestre: [1, 12, true],
-  saldo_pendiente_cop: [0, 20000000, true],
-  ingreso_hogar_smmlv: [0.0, 20.0, false],
-  estrato: [1, 6, true],
-  horas_trabajo_semana: [0.0, 60.0, false],
-  tiempo_desplazamiento_min: [0, 240, true],
-  personas_a_cargo: [0, 6, true],
-  apoyo_familiar: [1, 5, true]
-};
+/* ======================================================== ESTADO GLOBAL == */
+let configContrato = null;
+let simulacionActual = null;
+let cohorteCompleta = [];        // Todos los estudiantes de la corrida activa (cache local)
+let estudiantesFiltrados = [];   // Resultado tras aplicar filtros y orden
+let paginaActual = 1;
+let tamanoPagina = 25;
+let chipActivo = "todos";
+let estudianteInspectorId = null;
+
+// Estado de comparación en What-If
+let baseWhatIf = null;           // { codigo, datos } cuando se carga un alumno real/sintético
+let timerWhatIf = null;
+let timerBusqueda = null;
+
+/* ============================================================ UTILIDADES == */
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+function escapar(texto) {
+  const div = document.createElement("div");
+  div.textContent = texto == null ? "" : String(texto);
+  return div.innerHTML;
+}
+
+const pct = (x, dec = 1) => (100 * Number(x || 0)).toFixed(dec) + "%";
+const num = (x, dec = 3) => Number(x || 0).toFixed(dec);
+const cop = (valor) => "$ " + Math.round(Number(valor || 0)).toLocaleString("es-CO");
+
+function valorLegible(campo, valor) {
+  if (typeof valor === "boolean") return valor ? "Sí" : "No";
+  if (valor === null || valor === undefined || valor === "") return "(vacío)";
+  if (campo === "saldo_pendiente_cop") return cop(valor);
+  if (campo === "asistencia_pct") return Number(valor).toFixed(1) + "%";
+  if (campo === "ingreso_hogar_smmlv") return Number(valor).toFixed(2) + " SMMLV";
+  return String(valor);
+}
+
+async function pedir(url, opciones) {
+  const respuesta = await fetch(url, opciones);
+  let cuerpo = null;
+  try {
+    cuerpo = await respuesta.json();
+  } catch (_err) {
+    throw new Error("Respuesta no válida del servidor (HTTP " + respuesta.status + ")");
+  }
+  if (!respuesta.ok) {
+    throw new Error(cuerpo && cuerpo.error ? cuerpo.error : "Error HTTP " + respuesta.status);
+  }
+  return cuerpo;
+}
+
+function informarEstado(mensaje, tipo = "") {
+  const el = $("#estado-global");
+  if (!el) return;
+  el.textContent = mensaje;
+  el.className = "estado-global" + (tipo ? " " + tipo : "");
+}
+
+/* =================================================== TEMA Y NAVEGACIÓN == */
+function inicializarTema() {
+  const guardado = localStorage.getItem("simulador_tema");
+  if (guardado === "oscuro" || guardado === "claro") {
+    document.documentElement.setAttribute("data-tema", guardado);
+  }
+  actualizarIconoTema();
+
+  $("#btn-tema").addEventListener("click", () => {
+    const actual = document.documentElement.getAttribute("data-tema") || "claro";
+    const nuevo = actual === "oscuro" ? "claro" : "oscuro";
+    document.documentElement.setAttribute("data-tema", nuevo);
+    localStorage.setItem("simulador_tema", nuevo);
+    actualizarIconoTema();
+  });
+}
+
+function actualizarIconoTema() {
+  const oscuro = document.documentElement.getAttribute("data-tema") === "oscuro";
+  $("#icono-tema").textContent = oscuro ? "☀" : "☾";
+}
+
+function activarPestana(idPanel) {
+  $$(".pestana").forEach((p) => {
+    const es = p.dataset.panel === idPanel;
+    p.classList.toggle("activa", es);
+    p.setAttribute("aria-selected", es ? "true" : "false");
+  });
+  $$(".panel-vista").forEach((panel) => {
+    panel.classList.toggle("activo", panel.id === idPanel);
+  });
+}
+
+$$(".pestana").forEach((btn) => {
+  btn.addEventListener("click", () => activarPestana(btn.dataset.panel));
+});
+
+function toggleConfig(forzar) {
+  const gaveta = $("#gaveta-config");
+  const btn = $("#btn-toggle-config");
+  const abrir = typeof forzar === "boolean" ? forzar : gaveta.hidden;
+  gaveta.hidden = !abrir;
+  btn.setAttribute("aria-expanded", abrir ? "true" : "false");
+}
+
+$("#btn-toggle-config").addEventListener("click", () => toggleConfig());
+$("#btn-cerrar-config").addEventListener("click", () => toggleConfig(false));
+
+/* =============================================== 1. CORRER SIMULACIONES == */
+function sincronizarPildorasEscenario(origen, n, tasa) {
+  const esReal = origen === "uci";
+  $("#ayuda-n").textContent = esReal
+    ? "Muestra del CSV real UCI (máx. 3.630 cerrados)"
+    : "Tamaño de la cohorte sintética (1 – 5.000)";
+  $("#ayuda-semilla").textContent = esReal
+    ? "Controla submuestreo aleatorio (si n < 3.630) e intervalos"
+    : "Misma semilla = misma cohorte e intervalos";
+
+  $$("[data-modo-sim]").forEach((btn) => {
+    const cfg = MODOS_SIMULACION[btn.dataset.modoSim];
+    const coincide = cfg &&
+      cfg.origen === (origen || "sintetica") &&
+      Number(n) === cfg.n &&
+      Math.abs(Number(tasa) - cfg.tasa_base) < 0.001;
+    btn.classList.toggle("activa", Boolean(coincide));
+  });
+}
+
+$("#origen").addEventListener("change", () => {
+  sincronizarPildorasEscenario(
+    $("#origen").value,
+    Number($("#n").value),
+    Number($("#tasa_base").value)
+  );
+});
+
+$$("[data-modo-sim]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const cfg = MODOS_SIMULACION[btn.dataset.modoSim];
+    if (!cfg) return;
+    $("#origen").value = cfg.origen;
+    $("#n").value = cfg.n;
+    $("#semilla").value = cfg.semilla;
+    $("#tasa_base").value = cfg.tasa_base;
+    $("#k_montecarlo").value = cfg.k_montecarlo;
+    sincronizarPildorasEscenario(cfg.origen, cfg.n, cfg.tasa_base);
+    ejecutarFormularioSimulacion();
+  });
+});
+
+$("#form-simular").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  ejecutarFormularioSimulacion();
+});
+
+async function ejecutarFormularioSimulacion() {
+  const btn = $("#btn-simular");
+  const pildoras = $$("[data-modo-sim]");
+  btn.disabled = true;
+  pildoras.forEach((p) => { p.disabled = true; });
+  informarEstado("Ejecutando simulación y calibrando b₀…", "cargando");
+
+  const cuerpo = {
+    n: Number($("#n").value),
+    semilla: Number($("#semilla").value),
+    tasa_base: Number($("#tasa_base").value),
+    umbral_medio: Number($("#umbral_medio").value),
+    umbral_alto: Number($("#umbral_alto").value),
+    k_montecarlo: Number($("#k_montecarlo").value)
+  };
+  if ($("#origen").value === "uci") {
+    cuerpo.origen = "uci";
+  }
+
+  try {
+    const sim = await pedir("/api/simulaciones", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cuerpo)
+    });
+    toggleConfig(false);
+    cerrarInspector();
+    await activarSimulacion(sim);
+    await cargarHistorial();
+    informarEstado("Corrida #" + sim.id + " guardada en SQLite", "listo");
+  } catch (err) {
+    informarEstado(err.message, "error");
+  } finally {
+    btn.disabled = false;
+    pildoras.forEach((p) => { p.disabled = false; });
+  }
+}
+
+async function activarSimulacion(sim) {
+  simulacionActual = sim;
+  const p = sim.parametros;
+
+  $("#origen").value = p.origen || "sintetica";
+  $("#n").value = p.n;
+  $("#semilla").value = p.semilla;
+  $("#tasa_base").value = p.tasa_base;
+  $("#umbral_medio").value = p.umbral_medio;
+  $("#umbral_alto").value = p.umbral_alto;
+  $("#k_montecarlo").value = p.k_montecarlo;
+  sincronizarPildorasEscenario(p.origen || "sintetica", p.n, p.tasa_base);
+
+  // Descargamos la cohorte completa de la corrida una sola vez para filtrado,
+  // histograma desglosado UCI e inspección lateral instantáneos en cliente.
+  const respuestaEst = await pedir("/api/simulaciones/" + sim.id + "/estudiantes?orden=p&sentido=desc");
+  cohorteCompleta = respuestaEst.estudiantes || [];
+
+  resetearControlesFiltro(false);
+  pintarTodo(sim);
+}
+
+/* ============================================= 2. PANORAMA Y GRÁFICAS == */
+function pintarTodo(sim) {
+  const r = sim.resumen;
+  const p = sim.parametros;
+  const esUci = p.origen === "uci";
+
+  // Badges de pestañas
+  $("#badge-tab-estudiantes").textContent = String(r.n_total);
+  const vOk = sim.validacion_modelo && sim.validacion_modelo.ok;
+  const badgeVal = $("#badge-tab-validacion");
+  badgeVal.textContent = esUci && r.evaluacion_real
+    ? "AUC " + num(r.evaluacion_real.auc_roc, 2)
+    : (vOk ? "4/4 Pasa" : "Revisar");
+  badgeVal.className = "badge-pestana " + (vOk ? "exito" : "alerta");
+
+  pintarCintaContexto(sim);
+  pintarKPIs(sim);
+  pintarBarraProporcion(sim);
+
+  // Mostrar/ocultar controles exclusivos de UCI
+  $("#controles-histograma").hidden = !esUci;
+  $("#bloque-filtro-desenlace").hidden = !esUci;
+  $$("#cabecera-tabla-estudiantes .col-desenlace").forEach((th) => { th.hidden = !esUci; });
+
+  dibujarHistograma(sim);
+  dibujarContribucion(sim);
+  construirChipsRapidos(sim);
+  recalcularTablaFiltrada();
+  pintarValidacion(sim);
+  programarEvaluacionWhatIf(0);
+}
+
+function pintarCintaContexto(sim) {
+  const p = sim.parametros;
+  const r = sim.resumen;
+  const esUci = p.origen === "uci";
+  const esSpadies = !esUci && Math.abs(p.tasa_base - 0.0442) < 0.001;
+  const cinta = $("#banner-contexto");
+
+  cinta.className = "cinta-contexto" + (esUci ? " es-real" : esSpadies ? " es-spadies" : "");
+
+  const etiquetaFuente = esUci
+    ? '<span class="insignia-fuente real">Dataset Real UCI</span>'
+    : esSpadies
+      ? '<span class="insignia-fuente spadies">Simulada · SPADIES 3.0</span>'
+      : '<span class="insignia-fuente sintetica">Simulada · Montecarlo</span>';
+
+  const titulo = esUci
+    ? "Predict Students' Dropout and Academic Success (Realinho et al., 2022)"
+    : esSpadies
+      ? "Cohorte sintética calibrada a tasa universitaria oficial MEN (2024)"
+      : "Cohorte sintética de referencia (alerta temprana universitaria)";
+
+  const extraUci = esUci && r.evaluacion_real
+    ? `<span>AUC–ROC: <strong>${num(r.evaluacion_real.auc_roc, 4)}</strong></span>`
+    : `<span>Semilla: <strong>${p.semilla}</strong></span>`;
+
+  cinta.innerHTML = `
+    <div class="cinta-principal">
+      ${etiquetaFuente}
+      <strong>Corrida #${sim.id}</strong>
+      <span class="texto-suave">· ${escapar(titulo)}</span>
+    </div>
+    <div class="cinta-metricas">
+      <span>Cohorte: <strong>${r.n_validos}</strong>/${r.n_total} válidos</span>
+      <span>Tasa base: <strong>${pct(p.tasa_base, 2)}</strong></span>
+      <span>b₀: <strong>${num(p.b0_calibrado, 4)}</strong></span>
+      ${extraUci}
+    </div>`;
+}
+
+function pintarKPIs(sim) {
+  const r = sim.resumen;
+  const p = sim.parametros;
+  const esUci = p.origen === "uci" && r.evaluacion_real;
+
+  const sextaTarjeta = esUci
+    ? `<div class="kpi-card bajo filtrable" data-kpi-chip="dropout" title="Filtrar desertores reales del dataset UCI">
+         <span class="kpi-etiqueta">AUC–ROC Empírico <span>↗</span></span>
+         <span class="kpi-valor">${num(r.evaluacion_real.auc_roc, 4)}</span>
+         <span class="kpi-detalle">${r.evaluacion_real.n_desertores_reales} desertores · ${r.evaluacion_real.n_graduados_reales} graduados</span>
+       </div>`
+    : `<div class="kpi-card revision filtrable" data-kpi-chip="revision" title="Ver registros rechazados por el Paso 1">
+         <span class="kpi-etiqueta">Revisión humana <span>↗</span></span>
+         <span class="kpi-valor">${r.n_revision_humana}</span>
+         <span class="kpi-detalle">Rechazados en Paso 1 (sin p inventada)</span>
+       </div>`;
+
+  $("#indicadores").innerHTML = `
+    <div class="kpi-card filtrable" data-kpi-chip="todos" title="Mostrar toda la cohorte">
+      <span class="kpi-etiqueta">Índice de riesgo general</span>
+      <span class="kpi-valor">${pct(r.indice_general, 2)}</span>
+      <span class="kpi-detalle">Objetivo ${pct(p.tasa_base, 2)} · b₀ = ${num(p.b0_calibrado, 3)}</span>
+    </div>
+    <div class="kpi-card alto filtrable" data-kpi-chip="alto" title="Filtrar estudiantes en riesgo alto">
+      <span class="kpi-etiqueta">Riesgo alto <span>↗</span></span>
+      <span class="kpi-valor" style="color:var(--alto)">${pct(r.pct_alto / 100, 1)}</span>
+      <span class="kpi-detalle">${r.conteo_nivel.alto} alumnos · p ≥ ${num(p.umbral_alto, 2)}</span>
+    </div>
+    <div class="kpi-card medio filtrable" data-kpi-chip="medio" title="Filtrar estudiantes en riesgo medio">
+      <span class="kpi-etiqueta">Riesgo medio <span>↗</span></span>
+      <span class="kpi-valor" style="color:var(--medio)">${pct(r.pct_medio / 100, 1)}</span>
+      <span class="kpi-detalle">${r.conteo_nivel.medio} alumnos · ${num(p.umbral_medio, 2)} ≤ p &lt; ${num(p.umbral_alto, 2)}</span>
+    </div>
+    <div class="kpi-card bajo filtrable" data-kpi-chip="bajo" title="Filtrar estudiantes en riesgo bajo">
+      <span class="kpi-etiqueta">Riesgo bajo <span>↗</span></span>
+      <span class="kpi-valor" style="color:var(--bajo)">${pct(r.pct_bajo / 100, 1)}</span>
+      <span class="kpi-detalle">${r.conteo_nivel.bajo} alumnos · p &lt; ${num(p.umbral_medio, 2)}</span>
+    </div>
+    <div class="kpi-card filtrable" data-kpi-chip="intervencion" title="Filtrar estudiantes que requieren acompañamiento">
+      <span class="kpi-etiqueta">Requieren apoyo <span>↗</span></span>
+      <span class="kpi-valor">${pct(r.pct_intervencion / 100, 1)}</span>
+      <span class="kpi-detalle">${r.n_intervencion} de ${r.n_validos} estudiantes válidos</span>
+    </div>
+    ${sextaTarjeta}`;
+
+  $$("#indicadores [data-kpi-chip]").forEach((card) => {
+    card.addEventListener("click", () => {
+      aplicarChipRapido(card.dataset.kpiChip);
+      $(".seccion-tabla").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  });
+}
+
+function pintarBarraProporcion(sim) {
+  const cont = $("#barra-proporcion-cohorte");
+  const r = sim.resumen;
+  if (!r.n_total) {
+    cont.hidden = true;
+    return;
+  }
+  cont.hidden = false;
+  const total = r.n_total;
+  const wBajo = (100 * r.conteo_nivel.bajo) / total;
+  const wMedio = (100 * r.conteo_nivel.medio) / total;
+  const wAlto = (100 * r.conteo_nivel.alto) / total;
+  const wRev = (100 * r.n_revision_humana) / total;
+
+  cont.innerHTML = `
+    <div class="fila-proporcion">
+      <div class="pista-apilada" role="img" aria-label="Composición de la cohorte por nivel de riesgo">
+        <div class="seg-apilado" style="width:${wBajo.toFixed(2)}%;background:var(--bajo)" title="Bajo: ${r.conteo_nivel.bajo}"></div>
+        <div class="seg-apilado" style="width:${wMedio.toFixed(2)}%;background:var(--medio)" title="Medio: ${r.conteo_nivel.medio}"></div>
+        <div class="seg-apilado" style="width:${wAlto.toFixed(2)}%;background:var(--alto)" title="Alto: ${r.conteo_nivel.alto}"></div>
+        ${wRev > 0 ? `<div class="seg-apilado" style="width:${wRev.toFixed(2)}%;background:var(--revision)" title="Revisión humana: ${r.n_revision_humana}"></div>` : ""}
+      </div>
+      <div class="leyenda-apilada">
+        <span class="item-leyenda"><i class="cuadro-color" style="background:var(--bajo)"></i>Bajo: <strong>${r.conteo_nivel.bajo}</strong> (${wBajo.toFixed(1)}%)</span>
+        <span class="item-leyenda"><i class="cuadro-color" style="background:var(--medio)"></i>Medio: <strong>${r.conteo_nivel.medio}</strong> (${wMedio.toFixed(1)}%)</span>
+        <span class="item-leyenda"><i class="cuadro-color" style="background:var(--alto)"></i>Alto: <strong>${r.conteo_nivel.alto}</strong> (${wAlto.toFixed(1)}%)</span>
+        <span class="item-leyenda"><i class="cuadro-color" style="background:var(--revision)"></i>Revisión Paso 1: <strong>${r.n_revision_humana}</strong> (${wRev.toFixed(1)}%)</span>
+      </div>
+    </div>`;
+}
+
+$("#chk-desglose-real").addEventListener("change", () => {
+  if (simulacionActual) dibujarHistograma(simulacionActual);
+});
+
+function dibujarHistograma(sim) {
+  const destino = $("#grafica-histograma");
+  const probs = (sim.resumen && sim.resumen.probabilidades) || [];
+  const params = sim.parametros;
+  if (!probs.length) {
+    destino.innerHTML = '<p class="vacio">Sin probabilidades válidas para graficar.</p>';
+    return;
+  }
+
+  const esUci = params.origen === "uci" && $("#chk-desglose-real").checked;
+  const ancho = 580, alto = 275;
+  const m = { arriba: 22, derecha: 18, abajo: 46, izquierda: 46 };
+  const anchoU = ancho - m.izquierda - m.derecha;
+  const altoU = alto - m.arriba - m.abajo;
+
+  const maxP = Math.max(...probs);
+  const limite = Math.min(1, Math.max(0.45, Math.ceil(maxP * 10.5) / 10));
+  const nBins = 24;
+  const anchoBin = limite / nBins;
+
+  const binsTotal = new Array(nBins).fill(0);
+  const binsDrop = new Array(nBins).fill(0);
+  const binsGrad = new Array(nBins).fill(0);
+
+  if (esUci && cohorteCompleta.length) {
+    cohorteCompleta.forEach((e) => {
+      if (!e.resultado) return;
+      let idx = Math.floor(e.resultado.p / anchoBin);
+      if (idx >= nBins) idx = nBins - 1;
+      if (idx < 0) idx = 0;
+      binsTotal[idx] += 1;
+      if (e.desenlace_real === "Dropout") binsDrop[idx] += 1;
+      else binsGrad[idx] += 1;
+    });
+  } else {
+    probs.forEach((p) => {
+      let idx = Math.floor(p / anchoBin);
+      if (idx >= nBins) idx = nBins - 1;
+      if (idx < 0) idx = 0;
+      binsTotal[idx] += 1;
+    });
+  }
+
+  const maxBin = Math.max(...binsTotal, 1);
+  const x = (v) => m.izquierda + (v / limite) * anchoU;
+  const y = (c) => m.arriba + altoU - (c / maxBin) * altoU;
+
+  let svg = `<svg viewBox="0 0 ${ancho} ${alto}" role="img" aria-label="Histograma de probabilidades">`;
+
+  for (let i = 0; i <= 4; i++) {
+    const c = (maxBin / 4) * i;
+    const py = y(c);
+    svg += `<line x1="${m.izquierda}" y1="${py}" x2="${ancho - m.derecha}" y2="${py}" stroke="var(--svg-rejilla)" stroke-width="1"/>`;
+    svg += `<text x="${m.izquierda - 7}" y="${py + 4}" font-size="11" fill="var(--svg-texto)" text-anchor="end">${Math.round(c)}</text>`;
+  }
+
+  binsTotal.forEach((total, i) => {
+    if (!total) return;
+    const ini = i * anchoBin;
+    const fin = (i + 1) * anchoBin;
+    const bx = x(ini);
+    const bw = Math.max(2, x(fin) - bx - 1.8);
+
+    if (esUci) {
+      const cGrad = binsGrad[i];
+      const cDrop = binsDrop[i];
+      const yTotal = y(total);
+      const yDrop = y(cDrop);
+      const hDrop = m.arriba + altoU - yDrop;
+      const hGrad = yDrop - yTotal;
+
+      if (cGrad > 0) {
+        svg += `<rect x="${bx}" y="${yTotal}" width="${bw}" height="${hGrad}" fill="${COLOR_NIVEL.bajo}" opacity="0.78" rx="1.5">
+          <title>[${num(ini, 2)} – ${num(fin, 2)}] Graduados reales: ${cGrad} · Desertores reales: ${cDrop}</title></rect>`;
+      }
+      if (cDrop > 0) {
+        svg += `<rect x="${bx}" y="${yDrop}" width="${bw}" height="${hDrop}" fill="${COLOR_NIVEL.alto}" opacity="0.86" rx="1.5">
+          <title>[${num(ini, 2)} – ${num(fin, 2)}] Desertores reales: ${cDrop} · Graduados reales: ${cGrad}</title></rect>`;
+      }
+    } else {
+      const centro = (i + 0.5) * anchoBin;
+      const niv = centro >= params.umbral_alto ? "alto" : centro >= params.umbral_medio ? "medio" : "bajo";
+      const by = y(total);
+      svg += `<rect x="${bx}" y="${by}" width="${bw}" height="${m.arriba + altoU - by}" fill="${COLOR_NIVEL[niv]}" opacity="0.85" rx="2">
+        <title>${total} estudiante(s) con p entre ${pct(ini, 1)} y ${pct(fin, 1)}</title></rect>`;
+    }
+  });
+
+  // Umbrales y media
+  [
+    [params.umbral_medio, "Medio " + pct(params.umbral_medio, 0), COLOR_NIVEL.medio],
+    [params.umbral_alto, "Alto " + pct(params.umbral_alto, 0), COLOR_NIVEL.alto]
+  ].forEach(([valor, etq, col]) => {
+    if (valor > limite) return;
+    const px = x(valor);
+    svg += `<line x1="${px}" y1="${m.arriba}" x2="${px}" y2="${m.arriba + altoU}" stroke="${col}" stroke-width="1.6" stroke-dasharray="5 3"/>`;
+    svg += `<text x="${px + 4}" y="${m.arriba + 11}" font-size="10.5" font-weight="700" fill="${col}">${etq}</text>`;
+  });
+
+  if (esUci) {
+    svg += `<g transform="translate(${ancho - 195}, ${m.arriba + 4})">
+      <rect x="0" y="0" width="9" height="9" rx="2" fill="${COLOR_NIVEL.alto}" opacity="0.86"/>
+      <text x="13" y="8" font-size="10.5" fill="var(--svg-titulo)">Desertó real</text>
+      <rect x="88" y="0" width="9" height="9" rx="2" fill="${COLOR_NIVEL.bajo}" opacity="0.78"/>
+      <text x="101" y="8" font-size="10.5" fill="var(--svg-titulo)">Graduado real</text>
+    </g>`;
+  }
+
+  svg += `<line x1="${m.izquierda}" y1="${m.arriba + altoU}" x2="${ancho - m.derecha}" y2="${m.arriba + altoU}" stroke="var(--svg-eje)" stroke-width="1"/>`;
+  for (let i = 0; i <= 5; i++) {
+    const v = (limite / 5) * i;
+    const px = x(v);
+    svg += `<text x="${px}" y="${m.arriba + altoU + 16}" font-size="11" fill="var(--svg-texto)" text-anchor="middle">${pct(v, 0)}</text>`;
+  }
+  svg += `<text x="${m.izquierda + anchoU / 2}" y="${alto - 7}" font-size="11.5" fill="var(--svg-titulo)" text-anchor="middle">Probabilidad estimada de deserción (p)</text>`;
+  svg += `</svg>`;
+
+  destino.innerHTML = svg;
+}
+
+function dibujarContribucion(sim) {
+  const destino = $("#grafica-contribucion");
+  const contribs = sim.resumen.contribucion_promedio;
+  const subs = sim.resumen.subpuntaje_promedio;
+  const probsDim = sim.resumen.problemas_por_dimension || {};
+  const coefs = sim.parametros.coeficientes;
+
+  const ancho = 580, alto = 275;
+  const m = { arriba: 18, derecha: 155, abajo: 46, izquierda: 94 };
+  const anchoU = ancho - m.izquierda - m.derecha;
+  const altoU = alto - m.arriba - m.abajo;
+
+  const orden = DIMENSIONES.slice().sort((a, b) => contribs[b] - contribs[a]);
+  const maxC = Math.max(...DIMENSIONES.map((d) => contribs[d]), 0.05);
+  const paso = altoU / orden.length;
+  const altoBarra = Math.min(34, paso - 14);
+
+  let svg = `<svg viewBox="0 0 ${ancho} ${alto}" role="img" aria-label="Contribución promedio al logit por dimensión">`;
+
+  for (let i = 0; i <= 4; i++) {
+    const v = (maxC / 4) * i;
+    const px = m.izquierda + (v / maxC) * anchoU;
+    svg += `<line x1="${px}" y1="${m.arriba}" x2="${px}" y2="${m.arriba + altoU}" stroke="var(--svg-rejilla)" stroke-width="1"/>`;
+    svg += `<text x="${px}" y="${m.arriba + altoU + 16}" font-size="11" fill="var(--svg-texto)" text-anchor="middle">${num(v, 2)}</text>`;
+  }
+
+  orden.forEach((dim, i) => {
+    const val = contribs[dim];
+    const by = m.arriba + i * paso + (paso - altoBarra) / 2;
+    const bw = Math.max(3, (val / maxC) * anchoU);
+    const nCrit = probsDim[dim] || 0;
+
+    svg += `<g class="barra-clicable" data-dim-click="${dim}">
+      <text x="${m.izquierda - 10}" y="${by + altoBarra / 2 + 4}" font-size="12" font-weight="700" fill="var(--svg-titulo)" text-anchor="end">${NOMBRE_DIM[dim]}</text>
+      <rect x="${m.izquierda}" y="${by}" width="${bw}" height="${altoBarra}" fill="${COLOR_DIM[dim]}" opacity="0.88" rx="4">
+        <title>Clic para filtrar problemas en ${NOMBRE_DIM[dim]} (${nCrit} estudiantes con s ≥ 0,60)</title>
+      </rect>
+      <text x="${m.izquierda + bw + 8}" y="${by + altoBarra / 2 - 2}" font-size="11.5" font-weight="700" fill="var(--svg-titulo)">
+        ${num(val, 3)} <tspan font-weight="400" fill="var(--svg-texto)" font-size="10.5">(b=${num(coefs[dim], 1)} · s̄=${num(subs[dim], 2)})</tspan>
+      </text>
+      <text x="${m.izquierda + bw + 8}" y="${by + altoBarra / 2 + 12}" font-size="10.5" fill="${nCrit > 0 ? COLOR_DIM[dim] : "var(--svg-texto)"}" font-weight="600">
+        ${nCrit} con problema (s ≥ 0,60)
+      </text>
+    </g>`;
+  });
+
+  svg += `<line x1="${m.izquierda}" y1="${m.arriba}" x2="${m.izquierda}" y2="${m.arriba + altoU}" stroke="var(--svg-eje)" stroke-width="1"/>`;
+  svg += `<text x="${m.izquierda + anchoU / 2}" y="${alto - 7}" font-size="11.5" fill="var(--svg-titulo)" text-anchor="middle">Aporte medio al logit (b_d · s̄_d)</text>`;
+  svg += `</svg>`;
+
+  destino.innerHTML = svg;
+
+  destino.querySelectorAll("[data-dim-click]").forEach((g) => {
+    g.addEventListener("click", () => {
+      const dim = g.getAttribute("data-dim-click");
+      $("#f-dimension").value = $("#f-dimension").value === dim ? "" : dim;
+      chipActivo = "personalizado";
+      actualizarEstadoChips();
+      recalcularTablaFiltrada();
+      $(".seccion-tabla").scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  });
+}
+
+/* ========================================== 3. EXPLORADOR Y PAGINACIÓN == */
+function construirChipsRapidos(sim) {
+  const r = sim.resumen;
+  const esUci = sim.parametros.origen === "uci" && r.evaluacion_real;
+  const items = [
+    ["todos", "Todos", r.n_total],
+    ["alto", "Riesgo Alto", r.conteo_nivel.alto],
+    ["medio", "Riesgo Medio", r.conteo_nivel.medio],
+    ["intervencion", "Requieren Apoyo", r.n_intervencion]
+  ];
+  if (r.n_revision_humana > 0 || !esUci) {
+    items.push(["revision", "Revisión Humana", r.n_revision_humana]);
+  }
+  if (esUci) {
+    items.push(["dropout", "Desertó Real (UCI)", r.evaluacion_real.n_desertores_reales]);
+    items.push(["graduate", "Graduado Real (UCI)", r.evaluacion_real.n_graduados_reales]);
+  }
+
+  $("#chips-rapidos").innerHTML = items.map(([clave, texto, conteo]) => `
+    <button type="button" class="chip-filtro ${chipActivo === clave ? "activo" : ""}" data-chip="${clave}">
+      <span>${escapar(texto)}</span>
+      <span class="conteo-chip">(${conteo})</span>
+    </button>
+  `).join("");
+
+  $$("#chips-rapidos [data-chip]").forEach((btn) => {
+    btn.addEventListener("click", () => aplicarChipRapido(btn.dataset.chip));
+  });
+}
+
+function aplicarChipRapido(clave) {
+  resetearControlesFiltro(false);
+  chipActivo = clave;
+
+  if (clave === "alto" || clave === "medio" || clave === "bajo") {
+    $("#f-nivel").value = clave;
+  } else if (clave === "intervencion") {
+    $("#f-intervencion").value = "true";
+  } else if (clave === "revision") {
+    $("#f-revision").checked = true;
+  } else if (clave === "dropout") {
+    $("#f-desenlace").value = "Dropout";
+  } else if (clave === "graduate") {
+    $("#f-desenlace").value = "Graduate";
+  }
+  actualizarEstadoChips();
+  recalcularTablaFiltrada();
+}
+
+function actualizarEstadoChips() {
+  $$("#chips-rapidos [data-chip]").forEach((b) => {
+    b.classList.toggle("activo", b.dataset.chip === chipActivo);
+  });
+  const hayAlgunFiltro = Boolean(
+    $("#f-buscar").value.trim() ||
+    $("#f-nivel").value ||
+    $("#f-intervencion").value ||
+    $("#f-dimension").value ||
+    $("#f-desenlace").value ||
+    $("#f-revision").checked
+  );
+  $("#btn-limpiar-filtros").hidden = !hayAlgunFiltro;
+}
+
+function resetearControlesFiltro(recalcular = true) {
+  $("#f-buscar").value = "";
+  $("#f-nivel").value = "";
+  $("#f-intervencion").value = "";
+  $("#f-dimension").value = "";
+  $("#f-desenlace").value = "";
+  $("#f-revision").checked = false;
+  chipActivo = "todos";
+  actualizarEstadoChips();
+  if (recalcular) recalcularTablaFiltrada();
+}
+
+$("#btn-limpiar-filtros").addEventListener("click", () => resetearControlesFiltro(true));
+
+["#f-nivel", "#f-intervencion", "#f-dimension", "#f-desenlace", "#f-orden", "#f-revision"].forEach((sel) => {
+  $(sel).addEventListener("change", () => {
+    chipActivo = "personalizado";
+    actualizarEstadoChips();
+    recalcularTablaFiltrada();
+  });
+});
+
+$("#f-buscar").addEventListener("input", () => {
+  clearTimeout(timerBusqueda);
+  timerBusqueda = setTimeout(() => {
+    chipActivo = "personalizado";
+    actualizarEstadoChips();
+    recalcularTablaFiltrada();
+  }, 90);
+});
+
+$("#tamano-pagina").addEventListener("change", () => {
+  tamanoPagina = Number($("#tamano-pagina").value) || 25;
+  paginaActual = 1;
+  renderizarPaginaTabla();
+});
+
+$("#btn-pag-ant").addEventListener("click", () => {
+  if (paginaActual > 1) {
+    paginaActual -= 1;
+    renderizarPaginaTabla();
+  }
+});
+
+$("#btn-pag-sig").addEventListener("click", () => {
+  const totalPags = Math.max(1, Math.ceil(estudiantesFiltrados.length / tamanoPagina));
+  if (paginaActual < totalPags) {
+    paginaActual += 1;
+    renderizarPaginaTabla();
+  }
+});
+
+function recalcularTablaFiltrada() {
+  const q = $("#f-buscar").value.trim().toLowerCase();
+  const fNivel = $("#f-nivel").value;
+  const fInterv = $("#f-intervencion").value;
+  const fDim = $("#f-dimension").value;
+  const fDes = $("#f-desenlace").value;
+  const soloRev = $("#f-revision").checked;
+  const [campoOrden, sentido] = $("#f-orden").value.split("|");
+  const desc = sentido !== "asc";
+
+  estudiantesFiltrados = cohorteCompleta.filter((e) => {
+    if (soloRev && e.valido) return false;
+    if (q && !String(e.codigo || "").toLowerCase().includes(q)) return false;
+    if (fDes && e.desenlace_real !== fDes) return false;
+
+    if (fNivel || fInterv || fDim) {
+      if (!e.resultado) return false;
+      if (fNivel && e.resultado.nivel !== fNivel) return false;
+      if (fInterv === "true" && !e.resultado.requiere_intervencion) return false;
+      if (fInterv === "false" && e.resultado.requiere_intervencion) return false;
+      if (fDim && !e.resultado.problemas.includes(fDim)) return false;
+    }
+    return true;
+  });
+
+  const pesoNivel = { alto: 3, medio: 2, bajo: 1 };
+  const claveSub = {
+    s_academico: "academica",
+    s_financiero: "financiera",
+    s_laboral: "laboral",
+    s_personal: "personal"
+  };
+
+  estudiantesFiltrados.sort((a, b) => {
+    if (campoOrden === "codigo") {
+      const cmp = a.codigo.localeCompare(b.codigo);
+      return desc ? -cmp : cmp;
+    }
+    // Los registros inválidos (sin probabilidad) siempre quedan al final
+    const aNulo = a.resultado == null;
+    const bNulo = b.resultado == null;
+    if (aNulo && bNulo) return a.id - b.id;
+    if (aNulo) return 1;
+    if (bNulo) return -1;
+
+    let va = 0, vb = 0;
+    if (campoOrden === "p") {
+      va = a.resultado.p; vb = b.resultado.p;
+    } else if (campoOrden === "nivel") {
+      va = pesoNivel[a.resultado.nivel] || 0;
+      vb = pesoNivel[b.resultado.nivel] || 0;
+      if (va === vb) { va = a.resultado.p; vb = b.resultado.p; }
+    } else if (claveSub[campoOrden]) {
+      const d = claveSub[campoOrden];
+      va = a.resultado.subpuntajes[d];
+      vb = b.resultado.subpuntajes[d];
+    }
+    if (va === vb) return a.id - b.id;
+    return desc ? (vb - va) : (va - vb);
+  });
+
+  paginaActual = 1;
+  renderizarPaginaTabla();
+}
+
+function sparkbarHTML(valor, color, umbralProblema) {
+  const critico = valor >= umbralProblema;
+  const ancho = Math.max(0, Math.min(100, valor * 100)).toFixed(1);
+  return `
+    <td class="spark-celda">
+      <div class="spark-sup ${critico ? "critico" : ""}">
+        <span>${num(valor, 2)}</span>
+        ${critico ? '<span title="Supera el umbral de problema (0,60)">⚠</span>' : ""}
+      </div>
+      <div class="spark-pista">
+        <div class="spark-relleno" style="width:${ancho}%;background:${critico ? COLOR_NIVEL.alto : color}"></div>
+      </div>
+    </td>`;
+}
+
+function renderizarPaginaTabla() {
+  const esUci = Boolean(simulacionActual && simulacionActual.parametros.origen === "uci");
+  const umbralProb = (simulacionActual && simulacionActual.parametros.umbral_problema) || 0.60;
+  const total = estudiantesFiltrados.length;
+  const totalPags = Math.max(1, Math.ceil(total / tamanoPagina));
+  if (paginaActual > totalPags) paginaActual = totalPags;
+
+  const inicio = (paginaActual - 1) * tamanoPagina;
+  const fin = Math.min(inicio + tamanoPagina, total);
+  const pagina = estudiantesFiltrados.slice(inicio, fin);
+
+  $("#f-buscar").placeholder = esUci ? "Ej. UCI-0015" : "Ej. UNA-0042";
+  $("#caption-tabla").textContent =
+    (esUci ? "Dataset Real UCI" : "Cohorte Sintética") +
+    " · " + total + " estudiante(s) coinciden · clic en una fila para diagnóstico completo";
+
+  $("#info-paginacion").textContent = total
+    ? `Mostrando ${inicio + 1}–${fin} de ${total} estudiantes`
+    : "0 estudiantes";
+  $("#indicador-pagina").textContent = `${paginaActual} / ${totalPags}`;
+  $("#btn-pag-ant").disabled = paginaActual <= 1;
+  $("#btn-pag-sig").disabled = paginaActual >= totalPags;
+
+  const colSpan = esUci ? 10 : 9;
+  if (!pagina.length) {
+    $("#cuerpo-tabla").innerHTML =
+      `<tr><td colspan="${colSpan}" class="vacio" style="padding:20px;text-align:center">Ningún estudiante cumple los filtros activos.</td></tr>`;
+    return;
+  }
+
+  $("#cuerpo-tabla").innerHTML = pagina.map((est) => {
+    const sel = est.id === estudianteInspectorId ? " seleccionada" : "";
+    const celdaDesenlace = esUci
+      ? `<td>${est.desenlace_real === "Dropout"
+          ? '<span class="badge-desenlace dropout">Desertó</span>'
+          : '<span class="badge-desenlace graduate">Graduado</span>'}</td>`
+      : "";
+
+    if (!est.resultado) {
+      const detalleMotivo = est.mensaje_revision ||
+        `${est.motivo_revision || "invalido"} (${est.campo_revision || "registro"})`;
+      return `<tr data-id="${est.id}" class="${sel.trim()}">
+        <td><strong>${escapar(est.codigo)}</strong></td>
+        ${celdaDesenlace}
+        <td colspan="6" class="texto-suave">
+          Sin probabilidad · <code>${escapar(est.motivo_revision)}</code> — ${escapar(detalleMotivo)}
+        </td>
+        <td><span class="insignia revision">Paso 1</span></td>
+        <td><span class="texto-no">Revisión humana</span></td>
+      </tr>`;
+    }
+
+    const r = est.resultado;
+    const colNivel = COLOR_NIVEL[r.nivel] || COLOR_NIVEL.bajo;
+    const izq = Math.max(0, Math.min(100, r.p5 * 100)).toFixed(1);
+    const anchoBanda = Math.max(2, Math.min(100 - Number(izq), (r.p95 - r.p5) * 100)).toFixed(1);
+    const posP = Math.max(0, Math.min(99, r.p * 100)).toFixed(1);
+
+    return `<tr data-id="${est.id}" class="${sel.trim()}">
+      <td><strong>${escapar(est.codigo)}</strong></td>
+      ${celdaDesenlace}
+      <td class="celda-prob">
+        <div class="prob-fila-sup">
+          <span class="prob-principal" style="color:${colNivel}">${pct(r.p, 1)}</span>
+          <span class="prob-rango">${pct(r.p5, 0)}–${pct(r.p95, 0)}</span>
+        </div>
+        <div class="mini-intervalo">
+          <div class="mini-intervalo-banda" style="left:${izq}%;width:${anchoBanda}%;background:${colNivel}"></div>
+          <div class="mini-intervalo-punto" style="left:${posP}%;background:${colNivel}"></div>
+        </div>
+      </td>
+      <td><span class="insignia ${escapar(r.nivel)}">${escapar(r.nivel)}</span></td>
+      ${sparkbarHTML(r.subpuntajes.academica, COLOR_DIM.academica, umbralProb)}
+      ${sparkbarHTML(r.subpuntajes.financiera, COLOR_DIM.financiera, umbralProb)}
+      ${sparkbarHTML(r.subpuntajes.laboral, COLOR_DIM.laboral, umbralProb)}
+      ${sparkbarHTML(r.subpuntajes.personal, COLOR_DIM.personal, umbralProb)}
+      <td><span class="etiqueta-dim dim-${escapar(r.factor_principal)}">${escapar(NOMBRE_DIM[r.factor_principal])}</span></td>
+      <td>${r.requiere_intervencion
+        ? `<span class="pill-intervencion">Sí (${r.intervenciones.length})</span>`
+        : '<span class="texto-no">No</span>'}</td>
+    </tr>`;
+  }).join("");
+}
+
+// Delegación única de clics en la tabla (sin miles de listeners)
+$("#cuerpo-tabla").addEventListener("click", (ev) => {
+  const fila = ev.target.closest("tr[data-id]");
+  if (!fila) return;
+  abrirInspectorEstudiante(Number(fila.dataset.id));
+});
+
+/* Exportación CSV enriquecida */
+$("#btn-exportar-csv").addEventListener("click", () => {
+  if (!estudiantesFiltrados.length) {
+    informarEstado("No hay estudiantes filtrados para exportar.", "error");
+    return;
+  }
+  const escaparCelda = (v) => {
+    const t = v == null ? "" : String(v);
+    return (t.includes(",") || t.includes('"') || t.includes("\n"))
+      ? '"' + t.replace(/"/g, '""') + '"'
+      : t;
+  };
+  const cabeceras = [
+    "codigo", "desenlace_real", "valido", "motivo_revision", "campo_revision",
+    "mensaje_revision", "p", "p5", "p95", "nivel", "s_academico", "s_financiero",
+    "s_laboral", "s_personal", "factor_principal", "problemas", "requiere_intervencion"
+  ];
+  const lineas = [cabeceras.join(",")];
+  estudiantesFiltrados.forEach((e) => {
+    const r = e.resultado;
+    lineas.push([
+      e.codigo,
+      e.desenlace_real || "",
+      e.valido ? "1" : "0",
+      e.motivo_revision || "",
+      e.campo_revision || "",
+      e.mensaje_revision || "",
+      r ? num(r.p, 4) : "",
+      r ? num(r.p5, 4) : "",
+      r ? num(r.p95, 4) : "",
+      r ? r.nivel : "",
+      r ? num(r.subpuntajes.academica, 4) : "",
+      r ? num(r.subpuntajes.financiera, 4) : "",
+      r ? num(r.subpuntajes.laboral, 4) : "",
+      r ? num(r.subpuntajes.personal, 4) : "",
+      r ? r.factor_principal : "",
+      r ? r.problemas.join(";") : "",
+      r ? (r.requiere_intervencion ? "1" : "0") : ""
+    ].map(escaparCelda).join(","));
+  });
+
+  const blob = new Blob(["\uFEFF" + lineas.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `simulacion_${simulacionActual ? simulacionActual.id : "cohorte"}_estudiantes.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  informarEstado(`CSV exportado (${estudiantesFiltrados.length} registros).`, "listo");
+});
+
+/* ====================================== 4. INSPECTOR LATERAL + RADAR/WF == */
+function abrirInspectorEstudiante(estudianteId) {
+  const idx = estudiantesFiltrados.findIndex((e) => e.id === estudianteId);
+  const est = idx >= 0
+    ? estudiantesFiltrados[idx]
+    : cohorteCompleta.find((e) => e.id === estudianteId);
+  if (!est) return;
+
+  estudianteInspectorId = est.id;
+  $$("#cuerpo-tabla tr[data-id]").forEach((tr) => {
+    tr.classList.toggle("seleccionada", Number(tr.dataset.id) === est.id);
+  });
+
+  $("#velo-inspector").hidden = false;
+  $("#inspector-estudiante").hidden = false;
+
+  if (idx >= 0) {
+    $("#posicion-inspector").textContent = `${idx + 1} de ${estudiantesFiltrados.length}`;
+    $("#btn-est-ant").disabled = idx <= 0;
+    $("#btn-est-sig").disabled = idx >= estudiantesFiltrados.length - 1;
+  } else {
+    $("#posicion-inspector").textContent = "";
+    $("#btn-est-ant").disabled = true;
+    $("#btn-est-sig").disabled = true;
+  }
+
+  pintarContenidoInspector(est);
+}
+
+function cerrarInspector() {
+  estudianteInspectorId = null;
+  $("#velo-inspector").hidden = true;
+  $("#inspector-estudiante").hidden = true;
+  $$("#cuerpo-tabla tr.seleccionada").forEach((tr) => tr.classList.remove("seleccionada"));
+}
+
+function navegarInspector(delta) {
+  if (estudianteInspectorId == null) return;
+  const idx = estudiantesFiltrados.findIndex((e) => e.id === estudianteInspectorId);
+  if (idx < 0) return;
+  const nuevoIdx = idx + delta;
+  if (nuevoIdx < 0 || nuevoIdx >= estudiantesFiltrados.length) return;
+
+  const nuevaPag = Math.floor(nuevoIdx / tamanoPagina) + 1;
+  if (nuevaPag !== paginaActual) {
+    paginaActual = nuevaPag;
+    renderizarPaginaTabla();
+  }
+  abrirInspectorEstudiante(estudiantesFiltrados[nuevoIdx].id);
+}
+
+$("#btn-cerrar-inspector").addEventListener("click", cerrarInspector);
+$("#velo-inspector").addEventListener("click", cerrarInspector);
+$("#btn-est-ant").addEventListener("click", () => navegarInspector(-1));
+$("#btn-est-sig").addEventListener("click", () => navegarInspector(1));
+
+document.addEventListener("keydown", (ev) => {
+  if ($("#inspector-estudiante").hidden) return;
+  if (ev.key === "Escape") {
+    cerrarInspector();
+  } else if (ev.key === "ArrowDown") {
+    ev.preventDefault();
+    navegarInspector(1);
+  } else if (ev.key === "ArrowUp") {
+    ev.preventDefault();
+    navegarInspector(-1);
+  }
+});
+
+function svgRadar4D(subpuntajes, subpuntajesBase = null, umbral = 0.60) {
+  const tam = 210, cx = 105, cy = 105, radio = 68;
+  // Arriba: Académica, Derecha: Financiera, Abajo: Laboral, Izquierda: Personal
+  const dirs = [
+    ["academica", 0, -1, "middle", cx, cy - radio - 12],
+    ["financiera", 1, 0, "start", cx + radio + 8, cy + 4],
+    ["laboral", 0, 1, "middle", cx, cy + radio + 16],
+    ["personal", -1, 0, "end", cx - radio - 8, cy + 4]
+  ];
+
+  const pts = (s) => dirs.map(([d, dx, dy]) => {
+    const v = Math.max(0, Math.min(1, s[d] || 0));
+    return `${(cx + dx * radio * v).toFixed(1)},${(cy + dy * radio * v).toFixed(1)}`;
+  }).join(" ");
+
+  const rUmbral = radio * umbral;
+  let svg = `<svg viewBox="0 0 ${tam} ${tam}" role="img" aria-label="Perfil radar de las 4 dimensiones">`;
+
+  [0.5, 1.0].forEach((esc) => {
+    const rr = radio * esc;
+    svg += `<polygon points="${cx},${cy - rr} ${cx + rr},${cy} ${cx},${cy + rr} ${cx - rr},${cy}"
+             fill="none" stroke="var(--svg-rejilla)" stroke-width="1"/>`;
+  });
+  // Anillo de problema (0.60)
+  svg += `<polygon points="${cx},${cy - rUmbral} ${cx + rUmbral},${cy} ${cx},${cy + rUmbral} ${cx - rUmbral},${cy}"
+           fill="none" stroke="${COLOR_NIVEL.alto}" stroke-width="1" stroke-dasharray="3 2" opacity="0.65"/>`;
+
+  dirs.forEach(([d, dx, dy, anchor, tx, ty]) => {
+    svg += `<line x1="${cx}" y1="${cy}" x2="${cx + dx * radio}" y2="${cy + dy * radio}" stroke="var(--svg-rejilla)" stroke-width="1"/>`;
+    svg += `<text x="${tx}" y="${ty}" font-size="10" font-weight="700" fill="${COLOR_DIM[d]}" text-anchor="${anchor}">${NOMBRE_DIM[d].slice(0, 5)}.</text>`;
+  });
+
+  if (subpuntajesBase) {
+    svg += `<polygon points="${pts(subpuntajesBase)}" fill="none" stroke="var(--svg-texto)" stroke-width="1.5" stroke-dasharray="4 2"/>`;
+  }
+
+  svg += `<polygon points="${pts(subpuntajes)}" fill="var(--primario)" fill-opacity="0.22" stroke="var(--primario)" stroke-width="2"/>`;
+  dirs.forEach(([d, dx, dy]) => {
+    const v = Math.max(0, Math.min(1, subpuntajes[d] || 0));
+    svg += `<circle cx="${cx + dx * radio * v}" cy="${cy + dy * radio * v}" r="3.5" fill="${COLOR_DIM[d]}"/>`;
+  });
+  svg += `</svg>`;
+  return svg;
+}
+
+function svgWaterfallLogit(b0, contribuciones, pFinal) {
+  const ancho = 260, alto = 210;
+  const m = { arriba: 18, derecha: 14, abajo: 36, izquierda: 38 };
+  const anchoU = ancho - m.izquierda - m.derecha;
+  const altoU = alto - m.arriba - m.abajo;
+
+  const pasos = [
+    { etq: "b₀", ini: 0, fin: b0, col: "#64748b" }
+  ];
+  let acum = b0;
+  DIMENSIONES.forEach((d) => {
+    const c = contribuciones[d] || 0;
+    pasos.push({ etq: NOMBRE_DIM[d].slice(0, 4), ini: acum, fin: acum + c, col: COLOR_DIM[d] });
+    acum += c;
+  });
+  pasos.push({ etq: "z total", ini: 0, fin: acum, col: "#0f172a", esTotal: true });
+
+  const vals = pasos.flatMap((x) => [x.ini, x.fin, 0]);
+  const minV = Math.min(...vals) - 0.4;
+  const maxV = Math.max(...vals) + 0.6;
+  const y = (v) => m.arriba + altoU - ((v - minV) / (maxV - minV)) * altoU;
+  const y0 = y(0);
+  const pasoX = anchoU / pasos.length;
+  const bw = Math.min(24, pasoX - 8);
+
+  let svg = `<svg viewBox="0 0 ${ancho} ${alto}" role="img" aria-label="Cascada aditiva del logit">`;
+  svg += `<line x1="${m.izquierda}" y1="${y0}" x2="${ancho - m.derecha}" y2="${y0}" stroke="var(--svg-eje)" stroke-width="1" stroke-dasharray="3 2"/>`;
+  svg += `<text x="${m.izquierda - 5}" y="${y0 + 3}" font-size="9.5" fill="var(--svg-texto)" text-anchor="end">0</text>`;
+
+  pasos.forEach((item, i) => {
+    const px = m.izquierda + i * pasoX + (pasoX - bw) / 2;
+    const yA = y(item.ini);
+    const yB = y(item.fin);
+    const top = Math.min(yA, yB);
+    const h = Math.max(2, Math.abs(yB - yA));
+    const relleno = item.esTotal ? "var(--primario)" : item.col;
+    const delta = item.esTotal ? item.fin : (item.fin - item.ini);
+
+    svg += `<rect x="${px}" y="${top}" width="${bw}" height="${h}" fill="${relleno}" rx="2.5" opacity="0.9">
+      <title>${item.etq}: ${delta >= 0 ? "+" : ""}${num(delta, 2)} (logit acum: ${num(item.fin, 2)})</title>
+    </rect>`;
+    svg += `<text x="${px + bw / 2}" y="${alto - 20}" font-size="9.5" fill="var(--svg-texto)" text-anchor="middle">${item.etq}</text>`;
+  });
+
+  svg += `<text x="${ancho / 2}" y="${alto - 5}" font-size="10" font-weight="700" fill="var(--svg-titulo)" text-anchor="middle">z = ${num(acum, 2)} → p = ${pct(pFinal, 1)}</text>`;
+  svg += `</svg>`;
+  return svg;
+}
+
+function renderizarBloqueVariablesE(datos, campoConError = null) {
+  const coincideError = (campo) => {
+    if (!campoConError) return false;
+    if (campoConError === campo) return true;
+    if (campoConError === "estrato_ingreso" && (campo === "estrato" || campo === "ingreso_hogar_smmlv")) return true;
+    if (campoConError === "promedio_materias_perdidas" && (campo === "promedio" || campo === "materias_perdidas")) return true;
+    return false;
+  };
+
+  return `<div class="rejilla-variables-e">
+    ${DIMENSIONES.map((dim) => `
+      <div class="grupo-vars">
+        <h5 style="color:${COLOR_DIM[dim]}">${NOMBRE_DIM[dim]}</h5>
+        <ul class="lista-vars">
+          ${CAMPOS_DIM[dim].map(([campo, etq]) => `
+            <li class="${coincideError(campo) ? "campo-con-error" : ""}">
+              <span class="texto-suave">${escapar(etq)}</span>
+              <strong>${escapar(valorLegible(campo, datos[campo]))}</strong>
+            </li>`).join("")}
+        </ul>
+      </div>`).join("")}
+  </div>`;
+}
+
+function pintarContenidoInspector(est) {
+  const contenedor = $("#contenido-inspector");
+  const params = simulacionActual ? simulacionActual.parametros : {};
+  const badgeReal = est.desenlace_real
+    ? (est.desenlace_real === "Dropout"
+        ? '<span class="badge-desenlace dropout">Desenlace real: Desertó</span>'
+        : '<span class="badge-desenlace graduate">Desenlace real: Graduado</span>')
+    : "";
+
+  if (!est.resultado) {
+    contenedor.innerHTML = `
+      <div class="ficha-cabecera">
+        <div>
+          <h3 class="ficha-codigo">${escapar(est.codigo)}</h3>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <span class="insignia revision">Revisión humana · Paso 1</span>
+            ${badgeReal}
+          </div>
+        </div>
+        <button type="button" class="btn-primario btn-chico" id="btn-cargar-en-whatif">
+          Corregir y probar en What-If →
+        </button>
+      </div>
+
+      <div class="aviso-revision">
+        <strong>Por contrato no se asigna probabilidad de deserción.</strong><br>
+        Motivo detectado: <code>${escapar(est.motivo_revision)}</code> en <code>${escapar(est.campo_revision)}</code>.
+        ${est.mensaje_revision ? `<div style="margin-top:5px">Detalle: <em>${escapar(est.mensaje_revision)}</em>.</div>` : ""}
+        ${est.error_inyectado ? `<div style="margin-top:5px;font-size:12px">Nota: registro con error inyectado a propósito (<code>${escapar(est.error_inyectado)}</code>) para ejercitar el Paso 1.</div>` : ""}
+      </div>
+
+      <div class="bloque-seccion-ficha">
+        <h4>Variables del perfil recibido (E)</h4>
+        ${renderizarBloqueVariablesE(est.datos, est.campo_revision)}
+      </div>`;
+
+    $("#btn-cargar-en-whatif").addEventListener("click", () => enviarEstudianteAWhatIf(est));
+    return;
+  }
+
+  const r = est.resultado;
+  const colNivel = COLOR_NIVEL[r.nivel];
+  const escala = Math.max(0.4, Math.min(1, Math.max(r.p95 * 1.18, (params.umbral_alto || 0.35) * 1.25)));
+  const posPct = (v) => Math.max(0, Math.min(100, (v / escala) * 100));
+
+  const htmlIntervenciones = r.requiere_intervencion
+    ? r.intervenciones.map((i) => `
+        <div class="intervencion-card">
+          <span class="prioridad-badge">Prioridad ${i.prioridad}</span>
+          <strong>${escapar(i.nombre)}</strong>
+          <div class="texto-suave" style="font-size:11.5px">
+            Dimensión ${escapar(NOMBRE_DIM[i.dimension])} · <code>${escapar(i.tipo)}</code>
+          </div>
+          <ul>${i.acciones.map((a) => `<li>${escapar(a)}</li>`).join("")}</ul>
+        </div>`).join("")
+    : `<p class="texto-suave">No requiere intervención activa: nivel <strong>${escapar(r.nivel)}</strong>${
+        r.problemas.length ? " (sin cruzar el criterio global de acompañamiento)." : " sin dimensiones críticas."
+      }</p>`;
+
+  const barrasDim = DIMENSIONES.map((dim) => {
+    const s = r.subpuntajes[dim];
+    const crit = r.problemas.includes(dim);
+    return `
+      <div class="barra-dim ${crit ? "problema" : ""}">
+        <div class="fila-barra">
+          <span>${NOMBRE_DIM[dim]}${crit ? " ⚠" : ""}</span>
+          <span>s = ${num(s, 3)} · aporte b·s = +${num(r.contribuciones[dim], 2)}</span>
+        </div>
+        <div class="pista">
+          <div class="relleno" style="width:${(s * 100).toFixed(1)}%;background:${COLOR_DIM[dim]}"></div>
+        </div>
+      </div>`;
+  }).join("");
+
+  contenedor.innerHTML = `
+    <div class="ficha-cabecera">
+      <div>
+        <h3 class="ficha-codigo">${escapar(est.codigo)}</h3>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <span class="insignia ${escapar(r.nivel)}">Riesgo ${escapar(r.nivel)}</span>
+          <span class="etiqueta-dim dim-${escapar(r.factor_principal)}">Factor: ${escapar(NOMBRE_DIM[r.factor_principal])}</span>
+          ${badgeReal}
+        </div>
+      </div>
+      <div>
+        <div class="ficha-prob-grande" style="color:${colNivel}">${pct(r.p, 1)}</div>
+        <div style="margin-top:6px;text-align:right">
+          <button type="button" class="btn-primario btn-chico" id="btn-cargar-en-whatif">
+            Simular acompañamiento →
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="medidor-incertidumbre">
+      <div style="display:flex;justify-content:space-between;font-size:12px">
+        <span>Intervalo P5–P95 (Montecarlo 2): <strong>${pct(r.p5, 1)} – ${pct(r.p95, 1)}</strong></span>
+        <span class="texto-suave">Escala 0%–${pct(escala, 0)}</span>
+      </div>
+      <div class="pista-incertidumbre">
+        ${params.umbral_medio && params.umbral_medio <= escala
+          ? `<div class="marca-umbral-barra" style="left:${posPct(params.umbral_medio)}%" title="Umbral medio ${pct(params.umbral_medio, 0)}"></div>` : ""}
+        ${params.umbral_alto && params.umbral_alto <= escala
+          ? `<div class="marca-umbral-barra" style="left:${posPct(params.umbral_alto)}%" title="Umbral alto ${pct(params.umbral_alto, 0)}"></div>` : ""}
+        <div class="banda-p5-p95" style="left:${posPct(r.p5)}%;width:${Math.max(1.5, posPct(r.p95) - posPct(r.p5))}%;background:${colNivel}"></div>
+        <div class="aguja-p" style="left:${posPct(r.p)}%;background:${colNivel}"></div>
+      </div>
+    </div>
+
+    <div class="rejilla-visual-inspector">
+      <div class="caja-mini-svg">
+        <h4>Perfil 4D (anillo rojo = 0,60)</h4>
+        ${svgRadar4D(r.subpuntajes)}
+      </div>
+      <div class="caja-mini-svg">
+        <h4>Cascada del Logit</h4>
+        ${svgWaterfallLogit(params.b0_calibrado || -4.95, r.contribuciones, r.p)}
+      </div>
+    </div>
+
+    <div class="bloque-seccion-ficha">
+      <h4>Subpuntajes y contribución al riesgo</h4>
+      ${barrasDim}
+    </div>
+
+    <div class="bloque-seccion-ficha">
+      <h4>Paso 3 · Plan de acompañamiento recomendado</h4>
+      ${htmlIntervenciones}
+    </div>
+
+    <div class="bloque-seccion-ficha">
+      <h4>Variables de entrada (E)</h4>
+      ${renderizarBloqueVariablesE(est.datos)}
+    </div>`;
+
+  $("#btn-cargar-en-whatif").addEventListener("click", () => enviarEstudianteAWhatIf(est));
+}
+
+/* ====================================== 5. WHAT-IF CON /api/evaluar ==== */
+function poblarInputsWhatIf(datos) {
+  Object.entries(datos).forEach(([campo, valor]) => {
+    const input = $("#wi-" + campo);
+    if (!input) return;
+    input.value = valor === null || valor === undefined ? "" : String(valor);
+    const slider = document.querySelector(`input[type="range"][data-sync="wi-${campo}"]`);
+    if (slider && typeof valor === "number" && Number.isFinite(valor)) {
+      slider.value = String(valor);
+    }
+  });
+}
+
+function enviarEstudianteAWhatIf(est) {
+  cerrarInspector();
+  if (est.valido) {
+    baseWhatIf = { codigo: est.codigo, datos: JSON.parse(JSON.stringify(est.datos)) };
+    $("#barra-base-whatif").hidden = false;
+    $("#etiqueta-base-whatif").textContent = `${est.codigo} (p = ${pct(est.resultado.p, 1)} · ${est.resultado.nivel})`;
+    $("#badge-tab-whatif").textContent = est.codigo;
+  } else {
+    baseWhatIf = null;
+    $("#barra-base-whatif").hidden = true;
+    $("#badge-tab-whatif").textContent = "En vivo";
+  }
+  poblarInputsWhatIf(est.datos);
+  activarPestana("panel-whatif");
+  programarEvaluacionWhatIf(0);
+}
+
+$("#btn-restaurar-base-wi").addEventListener("click", () => {
+  if (!baseWhatIf) return;
+  poblarInputsWhatIf(baseWhatIf.datos);
+  programarEvaluacionWhatIf(0);
+});
+
+$("#btn-quitar-base-wi").addEventListener("click", () => {
+  baseWhatIf = null;
+  $("#barra-base-whatif").hidden = true;
+  $("#badge-tab-whatif").textContent = "En vivo";
+  programarEvaluacionWhatIf(0);
+});
+
+$("#btn-aplicar-intervencion-wi").addEventListener("click", () => {
+  // Simula el impacto concreto de otorgar el plan institucional del portal:
+  // beca/apoyo financiero + reestructuración de deuda + flexibilidad laboral + tutoría
+  const actual = leerRegistroWhatIf();
+  const acompañado = Object.assign({}, actual, {
+    tiene_apoyo_financiero: true,
+    saldo_pendiente_cop: Math.min(Number(actual.saldo_pendiente_cop || 0), 1000000),
+    asistencia_pct: Math.min(100, Math.max(Number(actual.asistencia_pct || 0), 90)),
+    promedio: Math.min(5.0, Math.round((Number(actual.promedio || 0) + 0.5) * 10) / 10),
+    materias_perdidas: Math.max(0, Number(actual.materias_perdidas || 0) - 1),
+    apoyo_familiar: Math.min(5, Math.max(Number(actual.apoyo_familiar || 3), 4))
+  });
+  poblarInputsWhatIf(acompañado);
+  programarEvaluacionWhatIf(0);
+});
+
+// Sincronización bidireccional entre sliders y cajas numéricas
+$$('#form-whatif input[type="range"][data-sync]').forEach((slider) => {
+  const idNum = slider.dataset.sync;
+  const caja = $("#" + idNum);
+  if (!caja) return;
+  slider.addEventListener("input", () => {
+    caja.value = slider.value;
+    programarEvaluacionWhatIf(80);
+  });
+  caja.addEventListener("input", () => {
+    const v = Number(caja.value);
+    if (Number.isFinite(v)) slider.value = String(v);
+    programarEvaluacionWhatIf(120);
+  });
+});
+
+$$("#form-whatif select").forEach((sel) => {
+  sel.addEventListener("change", () => programarEvaluacionWhatIf(0));
+});
+
+$$("[data-preset]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const preset = PRESETS_WHATIF[btn.dataset.preset];
+    if (!preset) return;
+    baseWhatIf = null;
+    $("#barra-base-whatif").hidden = true;
+    $("#badge-tab-whatif").textContent = "En vivo";
+    poblarInputsWhatIf(preset);
+    programarEvaluacionWhatIf(0);
+  });
+});
 
 function leerRegistroWhatIf() {
+  const enteros = new Set(
+    configContrato
+      ? configContrato.campos_enteros
+      : ["materias_perdidas", "semestre", "saldo_pendiente_cop", "estrato",
+         "tiempo_desplazamiento_min", "personas_a_cargo", "apoyo_familiar"]
+  );
+  const numericos = [
+    "promedio", "materias_perdidas", "asistencia_pct", "semestre",
+    "saldo_pendiente_cop", "ingreso_hogar_smmlv", "estrato",
+    "horas_trabajo_semana", "tiempo_desplazamiento_min",
+    "personas_a_cargo", "apoyo_familiar"
+  ];
   const r = {};
-  Object.keys(RANGOS_WHATIF).forEach((campo) => {
+  numericos.forEach((campo) => {
     const el = $("#wi-" + campo);
     if (!el || el.value.trim() === "") {
       r[campo] = null;
       return;
     }
     const v = Number(el.value);
-    r[campo] = v;
+    if (!Number.isFinite(v)) {
+      r[campo] = el.value;
+      return;
+    }
+    r[campo] = enteros.has(campo) && Number.isInteger(v) ? Math.trunc(v) : v;
   });
-  ["tiene_apoyo_financiero", "trabaja_en_area_de_estudio", "primera_generacion_universitaria"]
-    .forEach((campo) => {
-      const el = $("#wi-" + campo);
-      r[campo] = el ? el.value === "true" : false;
-    });
+
+  ["tiene_apoyo_financiero", "trabaja_en_area_de_estudio", "primera_generacion_universitaria"].forEach((c) => {
+    const el = $("#wi-" + c);
+    r[c] = el ? el.value === "true" : false;
+  });
   return r;
 }
 
-function validarRegistroCliente(r) {
-  // 1. Campo faltante
-  for (const campo of Object.keys(RANGOS_WHATIF)) {
-    if (r[campo] === null || r[campo] === undefined) {
-      return { valido: false, motivo: "campo_faltante", campo };
-    }
-  }
-  // 2. Tipo invalido (NaN, infinito o decimal en campo entero)
-  for (const [campo, [, , esEntero]] of Object.entries(RANGOS_WHATIF)) {
-    const v = r[campo];
-    if (typeof v !== "number" || !Number.isFinite(v)) {
-      return { valido: false, motivo: "tipo_invalido", campo };
-    }
-    if (esEntero && !Number.isInteger(v)) {
-      return { valido: false, motivo: "tipo_invalido", campo };
-    }
-  }
-  // 3. Fuera de rango
-  for (const [campo, [min, max]] of Object.entries(RANGOS_WHATIF)) {
-    const v = r[campo];
-    if (v < min || v > max) {
-      return { valido: false, motivo: "fuera_de_rango", campo };
-    }
-  }
-  // 4. Datos contradictorios
-  if (r.estrato >= 5 && r.ingreso_hogar_smmlv < 1.0) {
-    return { valido: false, motivo: "datos_contradictorios", campo: "estrato_ingreso" };
-  }
-  if (r.estrato <= 2 && r.ingreso_hogar_smmlv > 10.0) {
-    return { valido: false, motivo: "datos_contradictorios", campo: "estrato_ingreso" };
-  }
-  if (r.materias_perdidas > 0 && r.promedio === 5.0) {
-    return { valido: false, motivo: "datos_contradictorios", campo: "promedio_materias_perdidas" };
-  }
-  return { valido: true, motivo: null, campo: null };
+function programarEvaluacionWhatIf(esperaMs = 90) {
+  clearTimeout(timerWhatIf);
+  timerWhatIf = setTimeout(() => ejecutarEvaluacionWhatIf(), esperaMs);
 }
 
-function recorte(v, min = 0.0, max = 1.0) {
-  return Math.max(min, Math.min(max, v));
-}
-
-function evaluarWhatIf() {
+async function ejecutarEvaluacionWhatIf() {
   const panel = $("#resultado-whatif");
   if (!panel) return;
 
-  const r = leerRegistroWhatIf();
-  const veredicto = validarRegistroCliente(r);
+  const cuerpo = {
+    datos: leerRegistroWhatIf(),
+    k_montecarlo: 250
+  };
+  if (simulacionActual) {
+    cuerpo.simulacion_id = simulacionActual.id;
+  }
+  if (baseWhatIf) {
+    cuerpo.datos_base = baseWhatIf.datos;
+  }
 
-  if (!veredicto.valido) {
+  try {
+    const ev = await pedir("/api/evaluar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cuerpo)
+    });
+    pintarResultadoWhatIf(ev);
+  } catch (err) {
+    panel.innerHTML = `<div class="aviso-revision">${escapar(err.message)}</div>`;
+  }
+}
+
+function pintarResultadoWhatIf(ev) {
+  const panel = $("#resultado-whatif");
+  if (!ev.valido) {
     panel.innerHTML = `
-      <div class="detalle-cabecera">
+      <div class="ficha-cabecera">
         <div>
-          <h3>Veredicto Paso 1: Rechazado</h3>
-          <p class="nota">El registro no supera las reglas del contrato.</p>
+          <h3 style="margin:0">Veredicto Paso 1: Rechazado</h3>
+          <p class="nota-tarjeta">El registro incumple el contrato de entrada.</p>
         </div>
         <span class="insignia revision">Revisión humana</span>
       </div>
-      <div class="aviso-revision" style="margin-top:10px">
-        <strong>No se calcula probabilidad.</strong>
-        Motivo: <code>${escapar(veredicto.motivo)}</code> en
-        <code>${escapar(veredicto.campo)}</code>.
-        El caso se remite a un asesor humano del comité de apoyo.
+      <div class="aviso-revision">
+        <strong>No se calcula probabilidad.</strong><br>
+        Motivo: <code>${escapar(ev.motivo_revision)}</code> en el campo <code>${escapar(ev.campo_revision)}</code>.<br>
+        ${ev.mensaje_revision ? `Detalle del motor: <em>${escapar(ev.mensaje_revision)}</em>.` : ""}
       </div>`;
     return;
   }
 
-  const params = simulacionActual ? simulacionActual.parametros : {
-    b0_calibrado: -4.94753435254097,
-    umbral_medio: 0.15,
-    umbral_alto: 0.35,
-    umbral_problema: 0.60,
-    coeficientes: { academica: 3.0, financiera: 2.5, laboral: 1.5, personal: 1.2 }
-  };
+  const r = ev.resultado;
+  const p = ev.parametros;
+  const colNivel = COLOR_NIVEL[r.nivel];
+  const baseRes = ev.comparacion_base && ev.comparacion_base.resultado;
 
-  const sA = recorte(
-    0.40 * (1 - r.promedio / 5.0) +
-    0.30 * Math.min(r.materias_perdidas / 3.0, 1.0) +
-    0.30 * (1 - r.asistencia_pct / 100.0)
-  );
-  const sF = recorte(
-    0.35 * Math.min(r.saldo_pendiente_cop / 8000000.0, 1.0) +
-    0.30 * (1 - Math.min(r.ingreso_hogar_smmlv / 4.0, 1.0)) +
-    0.20 * ((6 - r.estrato) / 5.0) +
-    0.15 * (r.tiene_apoyo_financiero ? 0.0 : 1.0)
-  );
-  const intensidad = Math.min(r.horas_trabajo_semana / 40.0, 1.0);
-  const desalineado = r.trabaja_en_area_de_estudio ? 0.0 : 1.0;
-  const sL = recorte(0.70 * intensidad + 0.30 * intensidad * desalineado);
-  const sP = recorte(
-    0.30 * Math.min(r.tiempo_desplazamiento_min / 120.0, 1.0) +
-    0.25 * Math.min(r.personas_a_cargo / 3.0, 1.0) +
-    0.30 * ((5 - r.apoyo_familiar) / 4.0) +
-    0.15 * (r.primera_generacion_universitaria ? 1.0 : 0.0)
-  );
-
-  const subpuntajes = { academica: sA, financiera: sF, laboral: sL, personal: sP };
-  const coef = params.coeficientes;
-  const contribuciones = {};
-  let z = params.b0_calibrado;
-  DIMENSIONES.forEach((d) => {
-    contribuciones[d] = coef[d] * subpuntajes[d];
-    z += contribuciones[d];
-  });
-  const p = z >= 0 ? 1.0 / (1.0 + Math.exp(-z)) : Math.exp(z) / (1.0 + Math.exp(z));
-
-  const nivel = p >= params.umbral_alto ? "alto"
-              : p >= params.umbral_medio ? "medio" : "bajo";
-
-  let factorPrincipal = DIMENSIONES[0];
-  DIMENSIONES.forEach((d) => {
-    if (contribuciones[d] > contribuciones[factorPrincipal]) factorPrincipal = d;
-  });
-
-  const umbralProb = params.umbral_problema || 0.60;
-  const problemas = DIMENSIONES
-    .filter((d) => subpuntajes[d] >= umbralProb)
-    .sort((a, b) => subpuntajes[b] - subpuntajes[a]);
-
-  const requiereIntervencion = nivel === "alto" || (nivel === "medio" && problemas.length > 0);
-  let ordenadas = problemas.filter((d) => d !== factorPrincipal);
-  if (problemas.includes(factorPrincipal)) {
-    ordenadas.unshift(factorPrincipal);
-  } else if (requiereIntervencion && !ordenadas.length) {
-    ordenadas = [factorPrincipal];
+  let htmlComparador = "";
+  if (baseRes && baseWhatIf) {
+    const deltaPP = 100 * (r.p - baseRes.p);
+    const mejora = deltaPP <= 0;
+    htmlComparador = `
+      <div class="comparador-antes-despues">
+        <div>
+          <div class="texto-suave" style="font-size:11px">ANTES (${escapar(baseWhatIf.codigo)})</div>
+          <strong style="font-size:20px;color:${COLOR_NIVEL[baseRes.nivel]}">${pct(baseRes.p, 1)}</strong>
+          <div><span class="insignia ${escapar(baseRes.nivel)}">${escapar(baseRes.nivel)}</span></div>
+        </div>
+        <div>
+          <div class="delta-pill ${mejora ? "mejora" : "empeora"}">
+            ${deltaPP > 0 ? "+" : ""}${deltaPP.toFixed(1)} pp
+          </div>
+          <div class="texto-suave" style="font-size:11px;margin-top:3px">efecto neto</div>
+        </div>
+        <div>
+          <div class="texto-suave" style="font-size:11px">SIMULADO AHORA</div>
+          <strong style="font-size:20px;color:${colNivel}">${pct(r.p, 1)}</strong>
+          <div><span class="insignia ${escapar(r.nivel)}">${escapar(r.nivel)}</span></div>
+        </div>
+      </div>`;
   }
 
   const barras = DIMENSIONES.map((dim) => {
-    const s = subpuntajes[dim];
-    const esProblema = problemas.includes(dim);
+    const s = r.subpuntajes[dim];
+    const crit = r.problemas.includes(dim);
     return `
-      <div class="barra-dim ${esProblema ? "problema" : ""}">
+      <div class="barra-dim ${crit ? "problema" : ""}">
         <div class="fila-barra">
-          <span>${NOMBRE_DIM[dim]}${esProblema ? " ⚠" : ""}</span>
-          <span>s = ${num(s, 3)} · aporte b·s = ${num(contribuciones[dim], 3)}</span>
+          <span>${NOMBRE_DIM[dim]}${crit ? " ⚠" : ""}</span>
+          <span>s = ${num(s, 3)} · b·s = +${num(r.contribuciones[dim], 2)}</span>
         </div>
         <div class="pista">
-          <div class="relleno" style="width:${(100 * s).toFixed(1)}%;
-               background:${COLOR_DIM[dim]}"></div>
+          <div class="relleno" style="width:${(s * 100).toFixed(1)}%;background:${COLOR_DIM[dim]}"></div>
         </div>
       </div>`;
   }).join("");
 
-  const htmlIntervenciones = requiereIntervencion
-    ? ordenadas.map((dim, idx) => {
-        const ficha = CATALOGO_INTERVENCIONES[dim];
-        return `
-          <div class="intervencion-item">
-            <span class="prioridad">Prioridad ${idx + 1}</span>
-            <strong>${escapar(ficha.nombre)}</strong>
-            <div style="font-size:12px;color:#5b6879">
-              Dimensión ${NOMBRE_DIM[dim]} · <code>${escapar(ficha.tipo)}</code></div>
-            <ul>${ficha.acciones.map((a) => `<li>${escapar(a)}</li>`).join("")}</ul>
-          </div>`;
-      }).join("")
-    : `<p class="nota">No requiere intervención: nivel
-       <strong>${nivel}</strong>${problemas.length
-         ? " (aunque tiene dimensión problemática, el nivel global es bajo)."
-         : " sin dimensiones problemáticas."}</p>`;
+  const intervenciones = r.requiere_intervencion
+    ? r.intervenciones.map((i) => `
+        <div class="intervencion-card">
+          <span class="prioridad-badge">Prioridad ${i.prioridad}</span>
+          <strong>${escapar(i.nombre)}</strong>
+          <div class="texto-suave" style="font-size:11.5px">Dimensión ${escapar(NOMBRE_DIM[i.dimension])} · <code>${escapar(i.tipo)}</code></div>
+          <ul>${i.acciones.map((a) => `<li>${escapar(a)}</li>`).join("")}</ul>
+        </div>`).join("")
+    : `<p class="texto-suave">No requiere intervención: nivel <strong>${escapar(r.nivel)}</strong>.</p>`;
 
   panel.innerHTML = `
-    <div class="detalle-cabecera">
+    ${htmlComparador}
+    <div class="ficha-cabecera">
       <div>
-        <h3>Resultado en vivo · Paso 1 ✔ → Paso 2 → Paso 3</h3>
-        <p class="nota">Factor principal:
-          <span class="etiqueta-dim dim-${factorPrincipal}">${NOMBRE_DIM[factorPrincipal]}</span>
-          · logit z = ${num(z, 3)} (con b₀ = ${num(params.b0_calibrado, 4)})
-          · ${problemas.length} problema(s) (s ≥ 0,60)</p>
+        <h3 style="margin:0 0 4px">Paso 1 ✔ → Paso 2 → Paso 3</h3>
+        <p class="nota-tarjeta">
+          Intervalo P5–P95: <strong>${pct(r.p5, 1)} – ${pct(r.p95, 1)}</strong> ·
+          logit z = <code>${num(r.logit, 2)}</code> (b₀ = ${num(p.b0_calibrado, 3)})
+        </p>
       </div>
       <div style="text-align:right">
-        <div style="font-size:30px;font-weight:700;color:${COLOR_NIVEL[nivel]}">${pct(p, 1)}</div>
-        <span class="insignia ${nivel}">Riesgo ${nivel}</span>
+        <div class="ficha-prob-grande" style="color:${colNivel}">${pct(r.p, 1)}</div>
+        <span class="insignia ${escapar(r.nivel)}" style="margin-top:4px">Riesgo ${escapar(r.nivel)}</span>
       </div>
     </div>
-    <div class="rejilla-detalle">
-      <div class="bloque-detalle">
-        <h4>Paso 2 · Subpuntajes y aportes</h4>
-        ${barras}
+
+    <div class="rejilla-visual-inspector">
+      <div class="caja-mini-svg">
+        <h4>Radar 4D ${baseRes ? "(gris = base)" : ""}</h4>
+        ${svgRadar4D(r.subpuntajes, baseRes ? baseRes.subpuntajes : null)}
       </div>
-      <div class="bloque-detalle">
-        <h4>Paso 3 · Plan de intervención</h4>
-        ${htmlIntervenciones}
+      <div class="caja-mini-svg">
+        <h4>Cascada del Logit</h4>
+        ${svgWaterfallLogit(p.b0_calibrado, r.contribuciones, r.p)}
       </div>
+    </div>
+
+    <div class="bloque-seccion-ficha">
+      <h4>Subpuntajes por dimensión</h4>
+      ${barras}
+    </div>
+
+    <div class="bloque-seccion-ficha">
+      <h4>Paso 3 · Plan de acompañamiento</h4>
+      ${intervenciones}
     </div>`;
 }
 
-if ($("#form-whatif")) {
-  $("#form-whatif").querySelectorAll("input, select").forEach((el) => {
-    el.addEventListener("input", () => evaluarWhatIf());
-    el.addEventListener("change", () => evaluarWhatIf());
-  });
-  document.querySelectorAll("[data-preset]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const preset = PRESETS_WHATIF[btn.dataset.preset];
-      if (!preset) return;
-      Object.entries(preset).forEach(([campo, valor]) => {
-        const el = $("#wi-" + campo);
-        if (el) el.value = String(valor);
-      });
-      evaluarWhatIf();
-    });
-  });
-  evaluarWhatIf();
+/* ========================================== 6. VALIDACIÓN DEL MODELO === */
+function svgCurvaROC(puntos, auc) {
+  if (!puntos || puntos.length < 2) return "";
+  const tam = 250, m = 34;
+  const u = tam - m * 2;
+  const x = (fpr) => m + fpr * u;
+  const y = (tpr) => m + u - tpr * u;
+
+  const poly = puntos.map(([fpr, tpr]) => `${x(fpr).toFixed(1)},${y(tpr).toFixed(1)}`).join(" ");
+  const area = `${x(0)},${y(0)} ${poly} ${x(1)},${y(0)}`;
+
+  return `
+    <svg viewBox="0 0 ${tam} ${tam}" role="img" aria-label="Curva ROC empírica">
+      <rect x="${m}" y="${m}" width="${u}" height="${u}" fill="none" stroke="var(--svg-rejilla)" stroke-width="1"/>
+      <polygon points="${area}" fill="${COLOR_NIVEL.bajo}" fill-opacity="0.14"/>
+      <line x1="${x(0)}" y1="${y(0)}" x2="${x(1)}" y2="${y(1)}" stroke="var(--svg-eje)" stroke-width="1.2" stroke-dasharray="4 3"/>
+      <polyline points="${poly}" fill="none" stroke="${COLOR_NIVEL.bajo}" stroke-width="2.5"/>
+      <text x="${m + u * 0.58}" y="${m + u * 0.72}" font-size="11.5" font-weight="800" fill="${COLOR_NIVEL.bajo}">AUC = ${num(auc, 4)}</text>
+      <text x="${m + u / 2}" y="${tam - 7}" font-size="10.5" fill="var(--svg-texto)" text-anchor="middle">1 − Especificidad (FPR)</text>
+      <text x="11" y="${m + u / 2}" font-size="10.5" fill="var(--svg-texto)" text-anchor="middle" transform="rotate(-90 11 ${m + u / 2})">Sensibilidad (TPR)</text>
+    </svg>`;
 }
 
-/* ============================================= 10. ARRANQUE ========== */
-(async function inicio() {
-  await cargarHistorial();
-  // Si ya hay simulaciones guardadas, se abre la más reciente para que la
-  // página no arranque vacía al reiniciar el servidor.
+function svgTornadoSensibilidad(sens) {
+  const filas = sens.filas || [];
+  if (!filas.length) return "";
+  const ancho = 520, alto = 195;
+  const m = { arriba: 18, derecha: 78, abajo: 30, izquierda: 92 };
+  const anchoU = ancho - m.izquierda - m.derecha;
+  const altoU = alto - m.arriba - m.abajo;
+
+  const base = sens.indice_base;
+  const vals = filas.flatMap((f) => [f.indice_bajo, f.indice_alto, base]);
+  const minV = Math.max(0, Math.min(...vals) * 0.88);
+  const maxV = Math.min(1, Math.max(...vals) * 1.10);
+  const x = (v) => m.izquierda + ((v - minV) / Math.max(1e-6, maxV - minV)) * anchoU;
+  const xBase = x(base);
+  const paso = altoU / filas.length;
+  const bh = Math.min(24, paso - 10);
+
+  let svg = `<svg viewBox="0 0 ${ancho} ${alto}" role="img" aria-label="Diagrama de tornado de sensibilidad">`;
+  filas.forEach((f, i) => {
+    const py = m.arriba + i * paso + (paso - bh) / 2;
+    const xIzq = x(f.indice_bajo);
+    const xDer = x(f.indice_alto);
+
+    svg += `<text x="${m.izquierda - 8}" y="${py + bh / 2 + 4}" font-size="11.5" font-weight="700" fill="var(--svg-titulo)" text-anchor="end">${NOMBRE_DIM[f.dimension]}</text>`;
+    svg += `<rect x="${xIzq}" y="${py}" width="${Math.max(2, xBase - xIzq)}" height="${bh}" fill="#64748b" opacity="0.65" rx="3">
+      <title>−50% en b_${f.dimension}: índice ${pct(f.indice_bajo, 2)}</title></rect>`;
+    svg += `<rect x="${xBase}" y="${py}" width="${Math.max(2, xDer - xBase)}" height="${bh}" fill="${COLOR_DIM[f.dimension]}" opacity="0.9" rx="3">
+      <title>+50% en b_${f.dimension}: índice ${pct(f.indice_alto, 2)}</title></rect>`;
+    svg += `<text x="${xDer + 6}" y="${py + bh / 2 + 4}" font-size="11" font-weight="700" fill="var(--svg-titulo)">${num(f.amplitud_pp, 2)} pp</text>`;
+  });
+
+  svg += `<line x1="${xBase}" y1="${m.arriba - 4}" x2="${xBase}" y2="${m.arriba + altoU}" stroke="var(--svg-titulo)" stroke-width="1.5"/>`;
+  svg += `<text x="${xBase}" y="${alto - 6}" font-size="10.5" font-weight="700" fill="var(--svg-titulo)" text-anchor="middle">Base ${pct(base, 2)}</text>`;
+  svg += `</svg>`;
+  return svg;
+}
+
+function svgSparklineMonotonia(pasos) {
+  if (!pasos || pasos.length < 2) return "";
+  const w = 96, h = 24, pad = 3;
+  const ps = pasos.map((x) => x.p);
+  const minP = Math.min(...ps);
+  const maxP = Math.max(...ps);
+  const pts = ps.map((p, i) => {
+    const px = pad + (i / (ps.length - 1)) * (w - pad * 2);
+    const py = h - pad - ((p - minP) / Math.max(1e-6, maxP - minP)) * (h - pad * 2);
+    return `${px.toFixed(1)},${py.toFixed(1)}`;
+  }).join(" ");
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true">
+    <polyline points="${pts}" fill="none" stroke="${COLOR_NIVEL.bajo}" stroke-width="2"/>
+  </svg>`;
+}
+
+function resumenPerfilCara(datos) {
+  if (!datos) return '<span class="texto-no">—</span>';
+  const partes = [];
+  if (datos.nivel) partes.push(`<span class="insignia ${escapar(datos.nivel)}">${escapar(datos.nivel)}</span>`);
+  if (datos.requiere_intervencion !== undefined) {
+    partes.push(datos.requiere_intervencion ? '<strong>con apoyo</strong>' : '<span class="texto-no">sin apoyo</span>');
+  }
+  if (datos.problemas && datos.problemas.length) {
+    partes.push(datos.problemas.map((d) => `<span class="etiqueta-dim dim-${escapar(d)}">${escapar(NOMBRE_DIM[d])}</span>`).join(""));
+  }
+  if (datos.intervencion_principal) {
+    partes.push(`<code>${escapar(datos.intervencion_principal)}</code>`);
+  }
+  return partes.join(" · ");
+}
+
+function pintarValidacion(sim) {
+  const v = sim.validacion_modelo;
+  const p = sim.parametros;
+  const real = sim.resumen && sim.resumen.evaluacion_real;
+  const badge = (ok) => `<span class="veredicto ${ok ? "pasa" : "falla"}">${ok ? "Pasa" : "Falla"}</span>`;
+
+  const cal = v.calibracion;
+  const sens = v.sensibilidad;
+  const cara = v.validez_de_cara;
+  const mono = v.monotonia;
+
+  const bloqueEmpiricoUCI = real ? `
+    <article class="tarjeta" style="border-left:4px solid var(--bajo)">
+      <div class="cabecera-tarjeta">
+        <div>
+          <h3>Validación empírica contra desenlace real · Dataset UCI ${badge(real.auc_roc >= 0.75)}</h3>
+          <p class="nota-tarjeta">
+            Comparación directa de las probabilidades calculadas (sin reentrenar coeficientes expertos) contra <code>Target = Dropout / Graduate</code> en <strong>${escapar(real.fuente)}</strong>.
+          </p>
+        </div>
+      </div>
+      <div class="rejilla-dos-columnas" style="align-items:center;margin-top:8px">
+        <div style="max-width:270px;margin:0 auto">
+          ${svgCurvaROC(real.curva_roc, real.auc_roc)}
+        </div>
+        <div>
+          <div class="matriz-confusion-grid">
+            <div class="celda-mc acierto">
+              <strong>${real.matriz_confusion.vp}</strong>
+              <span>Verdaderos Positivos (Desertó + Recibe apoyo)</span>
+            </div>
+            <div class="celda-mc error-mc">
+              <strong>${real.matriz_confusion.fp}</strong>
+              <span>Falsos Positivos (Graduado + Recibe apoyo)</span>
+            </div>
+            <div class="celda-mc error-mc">
+              <strong>${real.matriz_confusion.fn}</strong>
+              <span>Falsos Negativos (Desertó sin alerta)</span>
+            </div>
+            <div class="celda-mc acierto">
+              <strong>${real.matriz_confusion.vn}</strong>
+              <span>Verdaderos Negativos (Graduado sin alerta)</span>
+            </div>
+          </div>
+          <ul class="lista-vars" style="margin-top:12px;font-size:12.5px">
+            <li><span>Probabilidad media asignada a desertores reales</span><strong>${pct(real.p_media_desertores, 2)}</strong></li>
+            <li><span>Probabilidad media asignada a graduados reales</span><strong>${pct(real.p_media_graduados, 2)}</strong></li>
+            <li><span>Sensibilidad / Especificidad operativa</span><strong>${pct(real.matriz_confusion.sensibilidad, 1)} / ${pct(real.matriz_confusion.especificidad, 1)}</strong></li>
+            <li><span>Tutorías académicas activadas (sA ≥ 0,60)</span><strong>${sim.resumen.problemas_por_dimension.academica} estudiantes</strong></li>
+          </ul>
+        </div>
+      </div>
+    </article>` : "";
+
+  $("#validacion").innerHTML = `
+    ${bloqueEmpiricoUCI}
+
+    <div class="rejilla-validacion-sup">
+      <article class="tarjeta">
+        <div class="cabecera-tarjeta">
+          <h3>1. Calibración exacta por bisección ${badge(cal.ok)}</h3>
+        </div>
+        <p class="nota-tarjeta">
+          <code>b₀</code> se despeja numéricamente para que la probabilidad media de la cohorte iguale la tasa base semestral.
+        </p>
+        <ul class="lista-vars" style="margin-top:10px;font-size:13px">
+          <li><span>Tasa base semestral (objetivo)</span><strong>${num(cal.tasa_base, 5)} (${pct(cal.tasa_base, 2)})</strong></li>
+          <li><span>Probabilidad media obtenida</span><strong>${num(cal.media_obtenida, 5)}</strong></li>
+          <li><span>Error absoluto de calibración</span><strong>${Math.abs(cal.diferencia).toExponential(2)} (máx ±${cal.margen})</strong></li>
+          <li><span>Intercepto b₀ calibrado</span><strong>${num(cal.b0_calibrado, 6)}</strong></li>
+        </ul>
+        <pre class="formula">p = 1 / (1 + exp(-(${num(cal.b0_calibrado, 4)} + ${num(p.coeficientes.academica, 1)}·sA + ${num(p.coeficientes.financiera, 1)}·sF + ${num(p.coeficientes.laboral, 1)}·sL + ${num(p.coeficientes.personal, 1)}·sP)))</pre>
+      </article>
+
+      <article class="tarjeta">
+        <div class="cabecera-tarjeta">
+          <h3>2. Sensibilidad a los coeficientes (±${pct(sens.variacion, 0)})</h3>
+        </div>
+        <p class="nota-tarjeta">
+          Diagrama de Tornado dejando <code>b₀</code> fijo. El supuesto más influyente sobre la cohorte es <strong>${escapar(NOMBRE_DIM[sens.mas_influyente])}</strong>.
+        </p>
+        <div class="lienzo-svg" style="margin-top:8px">
+          ${svgTornadoSensibilidad(sens)}
+        </div>
+      </article>
+    </div>
+
+    <article class="tarjeta">
+      <div class="cabecera-tarjeta">
+        <div>
+          <h3>3. Validez de cara sobre perfiles testigo ${badge(cara.ok)}</h3>
+          <p class="nota-tarjeta">Tres arquetipos definidos de antemano cuyo diagnóstico debe coincidir con el criterio experto.</p>
+        </div>
+      </div>
+      <div class="envoltorio-tabla">
+        <table class="tabla-datos">
+          <thead>
+            <tr>
+              <th>Perfil testigo</th>
+              <th>sA / sF / sL / sP</th>
+              <th>p estimada</th>
+              <th>Esperado</th>
+              <th>Obtenido</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${cara.perfiles.map((pf) => `
+              <tr>
+                <td>
+                  <strong>${escapar(pf.nombre)}</strong>
+                  <div class="texto-suave" style="font-size:11.5px">${escapar(pf.descripcion)}</div>
+                </td>
+                <td><code>${DIMENSIONES.map((d) => num(pf.subpuntajes[d], 2)).join(" / ")}</code></td>
+                <td><strong>${pct(pf.p, 2)}</strong></td>
+                <td>${resumenPerfilCara(pf.esperado)}</td>
+                <td>${resumenPerfilCara(pf.obtenido)}</td>
+                <td>${badge(pf.coincide)}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+    </article>
+
+    <article class="tarjeta">
+      <div class="cabecera-tarjeta">
+        <div>
+          <h3>4. Prueba de monotonía en ${mono.n_variables} variables ${badge(mono.ok)}</h3>
+          <p class="nota-tarjeta">Empeorar cualquier factor de riesgo de su mejor a su peor valor nunca disminuye <code>p</code>.</p>
+        </div>
+      </div>
+      <div class="envoltorio-tabla">
+        <table class="tabla-datos">
+          <thead>
+            <tr>
+              <th>Variable del contrato</th>
+              <th>p (mejor valor)</th>
+              <th>Curva mejor → peor</th>
+              <th>p (peor valor)</th>
+              <th>Veredicto</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${mono.variables.map((f) => `
+              <tr>
+                <td><code>${escapar(f.variable)}</code></td>
+                <td>${pct(f.p_mejor, 2)}</td>
+                <td>${svgSparklineMonotonia(f.pasos)}</td>
+                <td><strong>${pct(f.p_peor, 2)}</strong></td>
+                <td>${badge(f.ok)}</td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>
+    </article>`;
+}
+
+/* =================================================== 7. HISTORIAL DB === */
+async function cargarHistorial() {
   try {
-    const datos = await pedir("/api/simulaciones?limite=1");
-    if (datos.simulaciones.length) {
-      await abrirSimulacion(datos.simulaciones[0].id);
-      estado("Se cargó la última simulación guardada (#" +
-             datos.simulaciones[0].id + ").");
+    const datos = await pedir("/api/simulaciones?limite=50");
+    const filas = datos.simulaciones || [];
+    $("#badge-tab-historial").textContent = String(filas.length);
+
+    if (!filas.length) {
+      $("#cuerpo-historial").innerHTML =
+        '<tr><td colspan="11" class="vacio">Todavía no hay simulaciones guardadas.</td></tr>';
+      return;
     }
-  } catch (error) {
-    /* la página funciona igual sin historial previo */
+
+    $("#cuerpo-historial").innerHTML = filas.map((s) => {
+      const esUci = s.origen === "uci";
+      const esSpadies = !esUci && Math.abs(s.tasa_base - 0.0442) < 0.001;
+      const badgeOrigen = esUci
+        ? '<span class="insignia-fuente real">Dataset Real UCI</span>'
+        : esSpadies
+          ? '<span class="insignia-fuente spadies">Simulada · SPADIES</span>'
+          : '<span class="insignia-fuente sintetica">Simulada · Montecarlo</span>';
+      const activa = simulacionActual && simulacionActual.id === s.id ? "seleccionada" : "";
+
+      return `<tr data-sim-id="${s.id}" class="${activa}">
+        <td><strong>#${s.id}</strong></td>
+        <td>${badgeOrigen}</td>
+        <td>${escapar(String(s.fecha || "").replace("T", " "))}</td>
+        <td>${s.n}</td>
+        <td>${esUci && s.n >= 3630 ? "—" : s.semilla}</td>
+        <td>${pct(s.tasa_base, 2)}</td>
+        <td><code>${num(s.b0_calibrado, 3)}</code></td>
+        <td><strong>${pct(s.indice_general, 2)}</strong></td>
+        <td>${num(s.pct_alto, 1)}%</td>
+        <td>${num(s.pct_intervencion, 1)}%</td>
+        <td>${s.n_revision_humana}</td>
+      </tr>`;
+    }).join("");
+  } catch (err) {
+    informarEstado(err.message, "error");
+  }
+}
+
+$("#cuerpo-historial").addEventListener("click", async (ev) => {
+  const fila = ev.target.closest("tr[data-sim-id]");
+  if (!fila) return;
+  const id = Number(fila.dataset.simId);
+  try {
+    informarEstado("Cargando simulación #" + id + "…", "cargando");
+    const sim = await pedir("/api/simulaciones/" + id);
+    cerrarInspector();
+    await activarSimulacion(sim);
+    await cargarHistorial();
+    activarPestana("panel-resultados");
+    informarEstado("Mostrando simulación #" + id, "listo");
+  } catch (err) {
+    informarEstado(err.message, "error");
+  }
+});
+
+/* ========================================================= ARRANQUE ==== */
+(async function iniciarApp() {
+  inicializarTema();
+  try {
+    configContrato = await pedir("/api/config");
+  } catch (_e) {
+    configContrato = null;
+  }
+
+  await cargarHistorial();
+  try {
+    const rec = await pedir("/api/simulaciones?limite=1");
+    if (rec.simulaciones && rec.simulaciones.length) {
+      const sim = await pedir("/api/simulaciones/" + rec.simulaciones[0].id);
+      await activarSimulacion(sim);
+      await cargarHistorial();
+      informarEstado("Simulación #" + sim.id + " lista", "listo");
+    } else {
+      informarEstado("Pulsa un escenario para iniciar.");
+      programarEvaluacionWhatIf(0);
+    }
+  } catch (err) {
+    informarEstado(err.message, "error");
   }
 })();
