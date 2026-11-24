@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PMV · Simulador de deserción · Portal de Acompañamiento</title>
+<style>
+  :root{--bg:#0f172a;--card:#1e293b;--txt:#f1f5f9;--soft:#94a3b8;--azul:#38bdf8;--verde:#4ade80;--rojo:#f87171;--ambar:#fbbf24}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--txt);overflow:hidden}
+  .slide{position:absolute;inset:0;padding:5vh 7vw;display:none;flex-direction:column;justify-content:center}
+  .slide.on{display:flex;animation:in .35s ease}
+  @keyframes in{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:none}}
+  h1{font-size:clamp(34px,5vw,60px);margin:0 0 12px;line-height:1.1}
+  h2{font-size:clamp(26px,3.4vw,40px);margin:0 0 24px;color:var(--azul)}
+  p,li{font-size:clamp(17px,1.9vw,24px);line-height:1.5}
+  .sub{color:var(--soft);font-size:clamp(18px,2.2vw,28px)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px}
+  .card{background:var(--card);border-radius:14px;padding:20px}
+  .card b{display:block;color:var(--azul);margin-bottom:6px;font-size:clamp(16px,1.7vw,22px)}
+  .card span{font-size:clamp(15px,1.5vw,19px);color:var(--soft)}
+  .num{font-size:clamp(40px,5.5vw,72px);font-weight:800}
+  .ok{color:var(--verde)}.mal{color:var(--rojo)}.am{color:var(--ambar)}
+  .cadena{display:flex;gap:10px;align-items:stretch;flex-wrap:wrap;margin:10px 0 20px}
+  .paso{flex:1;min-width:150px;border:2px solid var(--azul);border-radius:12px;padding:14px;text-align:center;font-size:clamp(15px,1.6vw,20px)}
+  .paso small{display:block;color:var(--soft);font-size:.8em;margin-top:4px}
+  .fl{align-self:center;font-size:28px;color:var(--soft)}
+  table{border-collapse:collapse;width:100%;font-size:clamp(14px,1.5vw,19px)}
+  td,th{padding:9px 12px;border-bottom:1px solid #334155;text-align:left}
+  th{color:var(--azul)}
+  code{background:#0b1220;padding:2px 8px;border-radius:6px;color:var(--ambar)}
+  .nota{border-left:4px solid var(--ambar);background:#2a2410;padding:12px 18px;border-radius:6px}
+  .bar{height:14px;border-radius:7px;background:var(--azul)}
+  #hud{position:fixed;bottom:14px;left:0;right:0;display:flex;justify-content:center;gap:14px;align-items:center;color:var(--soft);font-size:14px}
+  #hud button{background:var(--card);color:var(--txt);border:0;border-radius:8px;padding:6px 14px;cursor:pointer}
+  #prog{position:fixed;top:0;left:0;height:4px;background:var(--azul);transition:width .3s}
+</style>
+</head>
+<body>
+<div id="prog"></div>
+
+<section class="slide">
+  <p class="sub">Problems &amp; Solution Design with AI · 3.er corte</p>
+  <h1>Simulador de probabilidad de deserción</h1>
+  <p class="sub">Producto Mínimo Viable del <b>Portal de Acompañamiento</b><br>Universidad Católica de Colombia</p>
+  <p class="sub" style="margin-top:40px">Usa ← → o espacio para navegar</p>
+</section>
+
+<section class="slide">
+  <h2>El problema</h2>
+  <div class="grid">
+    <div class="card"><div class="num am">8,65 %</div><b>Deserción anual universitaria</b><span>SPADIES 3.0, MEN, 2024</span></div>
+    <div class="card"><div class="num mal">22,61 %</div><b>Deserción acumulada a semestre 10</b><span>cohorte, nivel universitario</span></div>
+  </div>
+  <p style="margin-top:28px"><b>Pregunta operativa:</b> ¿a qué estudiantes acompañar este semestre, y con qué? La causa define la intervención: una tutoría no resuelve una deuda de matrícula.</p>
+</section>
+
+<section class="slide">
+  <h2>Simular primero, datos reales después</h2>
+  <ul>
+    <li><b>Punto de partida:</b> no teníamos histórico propio de la universidad, y los datos (promedio, deuda, ingreso, estrato) son sensibles. Por eso se construyó una cohorte sintética para validar el sistema de punta a punta.</li>
+    <li><b>Luego se incorporaron datos reales:</b> <code>modelo/datos_reales.py</code> es un adaptador que convierte datasets externos entrantes (UCI, 4.424 estudiantes) al contrato de 14 variables del simulador.</li>
+    <li>Funciona: <b>3.630 estudiantes reales</b> con desenlace cerrado se procesan por la misma cadena de 3 pasos (<code>origen = "uci"</code>) y se mide contra lo que realmente pasó.</li>
+  </ul>
+  <p class="sub">Los datos reales no reemplazan la arquitectura: entran por ella.</p>
+</section>
+
+<section class="slide">
+  <h2>Nuestro recorrido en dos etapas</h2>
+  <div class="grid">
+    <div class="card"><b>A · Pruebas de estrés</b><span>Contrato E→S, dataset adversarial, oráculo, motor v1→v2, biblioteca de prompts. Ronda 1: 14/20 → Ronda 2: 20/20.</span></div>
+    <div class="card"><b>B · Simulador (PMV)</b><span>App web con regresión logística de 4 dimensiones, incertidumbre P5–P95, base de datos y validación con datos reales.</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Arquitectura: tres pasos con contrato</h2>
+  <div class="cadena">
+    <div class="paso"><b>E</b><small>perfil del estudiante</small></div><div class="fl">→</div>
+    <div class="paso"><b>1 · Validar</b><small>error / abstener / válido</small></div><div class="fl">→</div>
+    <div class="paso"><b>2 · Riesgo</b><small>logística + P5–P95</small></div><div class="fl">→</div>
+    <div class="paso"><b>3 · Intervención</b><small>decisión y prioridad</small></div>
+  </div>
+  <p><b>Backend</b> Flask + API JSON · <b>BD</b> SQLite · <b>Front</b> HTML/JS propio con gráficas SVG · <b>Config</b> centralizada.</p>
+  <p class="sub">Garantía: nunca lanza excepción; toda entrada termina en plan, abstención o error.</p>
+</section>
+
+<section class="slide">
+  <h2>Cuatro dimensiones de riesgo</h2>
+  <div class="grid">
+    <div class="card"><b>Académica</b><span>promedio, materias perdidas, asistencia</span></div>
+    <div class="card"><b>Financiera</b><span>saldo, ingreso del hogar, estrato</span></div>
+    <div class="card"><b>Laboral</b><span>intensidad de trabajo, alineación con la carrera</span></div>
+    <div class="card"><b>Personal</b><span>desplazamiento, personas a cargo</span></div>
+  </div>
+  <p style="margin-top:24px"><code>sA = 0,40·(1 − promedio/5) + 0,30·min(perdidas/3,1) + 0,30·(1 − asistencia/100)</code><br>Se recalcula a mano en diez segundos.</p>
+</section>
+
+<section class="slide">
+  <h2>La decisión clave: logística, no Montecarlo</h2>
+  <div class="nota"><p style="margin:0">Montecarlo <b>no es un modelo</b> de deserción: es un método de muestreo. Responde <i>qué pasa si los supuestos se mueven</i>. La logística responde <i>por qué este estudiante está en riesgo</i>.</p></div>
+  <div class="grid" style="margin-top:22px">
+    <div class="card"><b>Logística (modelo)</b><span>p ∈ (0,1), contribución por dimensión, reentrenable con datos reales</span></div>
+    <div class="card"><b>Montecarlo 1</b><span>genera la cohorte sintética</span></div>
+    <div class="card"><b>Montecarlo 2</b><span>K = 1000 → intervalo P5–P95 de coeficientes</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>El intercepto no se inventó: se calibró</h2>
+  <p><code>p = 1 / (1 + exp(−(b₀ + 3,0·sA + 2,5·sF + 1,5·sL + 1,2·sP)))</code></p>
+  <p>b₀ se calibra por <b>bisección</b> para que la probabilidad media iguale la tasa base.</p>
+  <div class="grid">
+    <div class="card"><div class="num ok">0,09000</div><b>media obtenida</b><span>objetivo 0,09 · diferencia 10⁻⁸</span></div>
+    <div class="card"><div class="num">−4,9475</div><b>b₀ calibrado</b><span>n = 500, semilla 42</span></div>
+    <div class="card"><div class="num">4,42 %</div><b>tasa semestral oficial</b><span>botón de calibración SPADIES</span></div>
+  </div>
+</section>
+
+<section class="slide">
+  <h2>Adaptador de datos reales (datos_reales.py)</h2>
+  <div class="cadena">
+    <div class="paso"><b>CSV externo</b><small>UCI · 37 columnas</small></div><div class="fl">→</div>
+    <div class="paso"><b>mapear_fila_uci</b><small>a 14 variables del contrato</small></div><div class="fl">→</div>
+    <div class="paso"><b>Cadena 1·2·3</b><small>validar, riesgo, intervención</small></div><div class="fl">→</div>
+    <div class="paso"><b>AUC-ROC</b><small>vs. desenlace real</small></div>
+  </div>
+  <ul style="font-size:.85em">
+    <li>Promedio 0–20 → 0–5, materias perdidas, asistencia estimada, deuda, beca, desplazamiento.</li>
+    <li>Estrato e ingreso se <b>aproximan</b> desde ocupación de los padres (limitación declarada).</li>
+    <li>Resultado: <b>473 tutorías académicas</b> activadas que la cohorte sintética nunca generaba.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Validación: ¿por qué creerle al modelo?
+  <table>
+    <tr><th>Prueba</th><th>Resultado</th></tr>
+    <tr><td>Calibración</td><td class="ok">Pasa (±0,005)</td></tr>
+    <tr><td>Monotonía</td><td class="ok">13 de 13 variables</td></tr>
+    <tr><td>Validez de cara</td><td class="ok">3 de 3 perfiles</td></tr>
+    <tr><td>Dataset real UCI (N = 3.630)</td><td class="ok"><b>AUC-ROC 0,8936</b></td></tr>
+    <tr><td>Pruebas automáticas</td><td class="ok"><b>351 pasan</b></td></tr>
+  </table>
+</section>
+
+<section class="slide">
+  <h2>Hallazgo contraintuitivo</h2>
+  <p>El coeficiente más grande (académico, 3,0) es el que <b>menos</b> mueve el índice.</p>
+  <p>Efecto de variar cada coeficiente ±50 %:</p>
+  <div style="max-width:700px">
+    <p style="margin:6px 0">Financiera · 10,13 pp<br><span class="bar" style="display:block;width:100%"></span></p>
+    <p style="margin:6px 0">Académica · 3,22 pp<br><span class="bar" style="display:block;width:32%;background:var(--ambar)"></span></p>
+  </div>
+  <p class="sub">La influencia depende del tamaño típico del subpuntaje (s̄F = 0,43 vs s̄A = 0,11). Con datos reales, lo primero a estimar bien es <b>bF</b>.</p>
+</section>
+
+<section class="slide">
+  <h2>Pruebas de estrés: el motor encontró sus fallos</h2>
+  <div class="grid">
+    <div class="card"><div class="num am">14/20</div><b>Ronda 1 (v1)</b><span>6 fallos adversariales</span></div>
+    <div class="card"><div class="num ok">20/20</div><b>Ronda 2 (v2)</b><span>fallos corregidos</span></div>
+    <div class="card"><div class="num am">14/15</div><b>Casos nuevos Gemini</b><span>falla A03: hueco del contrato</span></div>
+  </div>
+  <p style="margin-top:20px;font-size:.9em">Ejemplos: posgrado con beca (S08), promedio como texto → <code>TypeError</code> (S13), umbral inclusivo mal aplicado (S10), estrato 1 con 18 SMMLV recibe beca (A03).</p>
+</section>
+
+<section class="slide">
+  <h2>Demostración del PMV</h2>
+  <ol>
+    <li><code>python app.py</code> → abrir <code>http://127.0.0.1:5000</code></li>
+    <li>Pulsar <b>Simular</b>: cohorte de 500 estudiantes, índice general y riesgo por dimensión.</li>
+    <li>Abrir un estudiante en el <b>inspector lateral</b>: intervalo P5–P95 y problemas detectados.</li>
+    <li>Probar <b>What-If</b> y la pestaña <b>Validación del modelo</b> (ROC, tornado).</li>
+    <li>Botón de <b>calibración oficial</b> SPADIES (0,0442).</li>
+  </ol>
+</section>
+
+<section class="slide">
+  <h2>Limitaciones (lo decimos de frente)</h2>
+  <ul>
+    <li>Coeficientes = <b>supuestos expertos</b>; P5–P95 solo mide su incertidumbre.</li>
+    <li>El AUC 0,8936 es del dataset UCI (Portugal), no de Colombia.</li>
+    <li>Los "casos reales" de la etapa A son perfiles típicos inventados; el oráculo lo redactó una IA y debe ser firmado por el equipo.</li>
+    <li>La cohorte sintética casi no genera tutorías académicas; no se retocó para forzarlo.</li>
+    <li>A03 abierto en el contrato.</li>
+  </ul>
+</section>
+
+<section class="slide">
+  <h2>Próximos pasos</h2>
+  <ul>
+    <li>Cerrar A03 (ronda 3) en contrato y código.</li>
+    <li>Estimar coeficientes por máxima verosimilitud con histórico anonimizado y validar con partición temporal.</li>
+    <li>Conseguir casos reales anonimizados.</li>
+    <li>Conectar con las pantallas del prototipo del Portal.</li>
+  </ul>
+  <p class="sub">La cadena de 3 pasos, la base y la página no cambian al pasar a datos reales.</p>
+</section>
+
+<section class="slide" style="text-align:center;align-items:center">
+  <h1>Gracias</h1>
+  <p class="sub">¿Preguntas?</p>
+  <p class="sub">Informe completo: <code>informe/informe_proyecto.md</code></p>
+</section>
+
+<div id="hud"><button onclick="ir(-1)">←</button><span id="n"></span><button onclick="ir(1)">→</button><button onclick="document.documentElement.requestFullscreen()">Pantalla completa</button></div>
+<script>
+  const S=[...document.querySelectorAll('.slide')];let i=0;
+  function mostrar(){S.forEach((s,k)=>s.classList.toggle('on',k===i));
+    document.getElementById('n').textContent=(i+1)+' / '+S.length;
+    document.getElementById('prog').style.width=((i+1)/S.length*100)+'%';location.hash=i+1}
+  function ir(d){i=Math.min(S.length-1,Math.max(0,i+d));mostrar()}
+  document.addEventListener('keydown',e=>{if(['ArrowRight',' ','PageDown'].includes(e.key))ir(1);if(['ArrowLeft','PageUp'].includes(e.key))ir(-1)});
+  i=Math.max(0,(parseInt(location.hash.slice(1))||1)-1);mostrar();
+</script>
+</body>
+</html>
