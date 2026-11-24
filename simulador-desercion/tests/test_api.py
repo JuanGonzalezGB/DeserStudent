@@ -607,3 +607,17 @@ def test_endpoint_evaluar_individual_y_comparacion_whatif(cliente, registro):
     assert rechazo["valido"] is False
     assert rechazo["motivo_revision"] == "datos_contradictorios"
     assert rechazo["mensaje_revision"]
+
+
+@pytest.mark.parametrize("escenario", [
+    {"n": 500, "semilla": 42, "tasa_base": 0.09, "umbral_medio": 0.15, "umbral_alto": 0.35, "k_montecarlo": 20},
+    {"n": 500, "semilla": 42, "tasa_base": 0.0442, "umbral_medio": 0.08, "umbral_alto": 0.20, "k_montecarlo": 20},
+    {"origen": "uci", "n": 3630, "semilla": 42, "tasa_base": 0.3915, "umbral_medio": 0.35, "umbral_alto": 0.65, "k_montecarlo": 20},
+    {"origen": "uci", "n": 500, "semilla": 42, "tasa_base": 0.0442, "umbral_medio": 0.05, "umbral_alto": 0.15, "k_montecarlo": 20},
+])
+def test_los_cuatro_escenarios_pasan_toda_la_validacion_incluida_cara(escenario):
+    sim = modelo.simular(**escenario)
+    assert sim["validacion_modelo"]["calibracion"]["ok"] is True
+    assert sim["validacion_modelo"]["validez_de_cara"]["ok"] is True
+    assert sim["validacion_modelo"]["monotonia"]["ok"] is True
+    assert sim["validacion_modelo"]["ok"] is True

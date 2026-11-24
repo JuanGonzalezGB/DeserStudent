@@ -58,10 +58,10 @@ const CAMPOS_DIM = {
 };
 
 const MODOS_SIMULACION = {
-  referencia: { origen: "sintetica", n: 500, semilla: 42, tasa_base: 0.09, k_montecarlo: 1000 },
-  spadies:    { origen: "sintetica", n: 500, semilla: 42, tasa_base: 0.0442, k_montecarlo: 1000 },
-  uci_full:   { origen: "uci", n: 3630, semilla: 42, tasa_base: 0.3915, k_montecarlo: 200 },
-  uci_500:    { origen: "uci", n: 500, semilla: 42, tasa_base: 0.0442, k_montecarlo: 300 }
+  referencia: { origen: "sintetica", n: 500, semilla: 42, tasa_base: 0.09, umbral_medio: 0.15, umbral_alto: 0.35, k_montecarlo: 1000 },
+  spadies:    { origen: "sintetica", n: 500, semilla: 42, tasa_base: 0.0442, umbral_medio: 0.08, umbral_alto: 0.20, k_montecarlo: 1000 },
+  uci_full:   { origen: "uci", n: 3630, semilla: 42, tasa_base: 0.3915, umbral_medio: 0.35, umbral_alto: 0.65, k_montecarlo: 200 },
+  uci_500:    { origen: "uci", n: 500, semilla: 42, tasa_base: 0.0442, umbral_medio: 0.05, umbral_alto: 0.15, k_montecarlo: 300 }
 };
 
 const PRESETS_WHATIF = {
@@ -217,7 +217,7 @@ $("#btn-toggle-config").addEventListener("click", () => toggleConfig());
 $("#btn-cerrar-config").addEventListener("click", () => toggleConfig(false));
 
 /* =============================================== 1. CORRER SIMULACIONES == */
-function sincronizarPildorasEscenario(origen, n, tasa) {
+function sincronizarPildorasEscenario(origen, n, tasa, uMedio = null, uAlto = null) {
   const esReal = origen === "uci";
   $("#ayuda-n").textContent = esReal
     ? "Muestra del CSV real UCI (máx. 3.630 cerrados)"
@@ -226,12 +226,17 @@ function sincronizarPildorasEscenario(origen, n, tasa) {
     ? "Controla submuestreo aleatorio (si n < 3.630) e intervalos"
     : "Misma semilla = misma cohorte e intervalos";
 
+  const um = uMedio != null ? Number(uMedio) : Number($("#umbral_medio").value);
+  const ua = uAlto != null ? Number(uAlto) : Number($("#umbral_alto").value);
+
   $$("[data-modo-sim]").forEach((btn) => {
     const cfg = MODOS_SIMULACION[btn.dataset.modoSim];
     const coincide = cfg &&
       cfg.origen === (origen || "sintetica") &&
       Number(n) === cfg.n &&
-      Math.abs(Number(tasa) - cfg.tasa_base) < 0.001;
+      Math.abs(Number(tasa) - cfg.tasa_base) < 0.001 &&
+      Math.abs(um - cfg.umbral_medio) < 0.001 &&
+      Math.abs(ua - cfg.umbral_alto) < 0.001;
     btn.classList.toggle("activa", Boolean(coincide));
   });
 }
@@ -252,8 +257,10 @@ $$("[data-modo-sim]").forEach((btn) => {
     $("#n").value = cfg.n;
     $("#semilla").value = cfg.semilla;
     $("#tasa_base").value = cfg.tasa_base;
+    $("#umbral_medio").value = cfg.umbral_medio;
+    $("#umbral_alto").value = cfg.umbral_alto;
     $("#k_montecarlo").value = cfg.k_montecarlo;
-    sincronizarPildorasEscenario(cfg.origen, cfg.n, cfg.tasa_base);
+    sincronizarPildorasEscenario(cfg.origen, cfg.n, cfg.tasa_base, cfg.umbral_medio, cfg.umbral_alto);
     ejecutarFormularioSimulacion();
   });
 });
@@ -1680,7 +1687,13 @@ function svgSparklineMonotonia(pasos) {
 function resumenPerfilCara(datos) {
   if (!datos) return '<span class="texto-no">—</span>';
   const partes = [];
-  if (datos.nivel) partes.push(`<span class="insignia ${escapar(datos.nivel)}">${escapar(datos.nivel)}</span>`);
+  if (datos.nivel) {
+    if (datos.nivel === "medio/alto") {
+      partes.push('<span class="insignia medio">medio</span> / <span class="insignia alto">alto</span>');
+    } else {
+      partes.push(`<span class="insignia ${escapar(datos.nivel)}">${escapar(datos.nivel)}</span>`);
+    }
+  }
   if (datos.requiere_intervencion !== undefined) {
     partes.push(datos.requiere_intervencion ? '<strong>con apoyo</strong>' : '<span class="texto-no">sin apoyo</span>');
   }

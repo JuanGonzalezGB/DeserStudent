@@ -119,7 +119,7 @@ PERFILES_REFERENCIA = (
         "nombre": "riesgo_solo_financiero",
         "descripcion": ("Deuda alta, ingreso bajo y sin apoyo; lo academico, "
                         "lo laboral y lo personal en valores tipicos"),
-        "esperado": {"nivel": "medio", "requiere_intervencion": True,
+        "esperado": {"nivel": "medio/alto", "requiere_intervencion": True,
                      "problemas": ["financiera"],
                      "intervencion_principal": "apoyo_financiero"},
         "datos": {
@@ -178,6 +178,9 @@ def validez_de_cara(b0, umbral_medio=None, umbral_alto=None):
             valor_obtenido = obtenido.get(clave)
             if isinstance(valor_esperado, list):
                 if set(valor_esperado) != set(valor_obtenido or []):
+                    coincide = False
+            elif clave == "nivel" and valor_esperado == "medio/alto":
+                if valor_obtenido not in ("medio", "alto"):
                     coincide = False
             elif valor_esperado != valor_obtenido:
                 coincide = False
