@@ -1,0 +1,92 @@
+[
+  {
+    "id": "R01",
+    "categoria": "típico",
+    "entrada": {
+      "id_estudiante": "EST-1021",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 3,
+      "promedio": 3.2,
+      "materias_inscritas": 6,
+      "materias_perdidas": 1,
+      "saldo_pendiente": 2400000,
+      "ingreso_hogar_smmlv": 1.5,
+      "estrato": 2,
+      "distancia_km": 12,
+      "solicita": "ambos"
+    }
+  },
+  {
+    "id": "R02",
+    "categoria": "típico",
+    "entrada": {
+      "id_estudiante": "EST-0877",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 7,
+      "promedio": 4.1,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 0,
+      "ingreso_hogar_smmlv": 5,
+      "estrato": 4,
+      "distancia_km": 3,
+      "solicita": "tutoria"
+    }
+  },
+  {
+    "id": "S06",
+    "categoria": "contradictorio",
+    "entrada": {
+      "id_estudiante": "SIM-06",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": 3.8,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 8000000,
+      "ingreso_hogar_smmlv": 0.3,
+      "estrato": 6,
+      "distancia_km": 6,
+      "solicita": "ambos"
+    }
+  },
+  {
+    "id": "S13",
+    "categoria": "tipo inválido",
+    "entrada": {
+      "id_estudiante": "SIM-13",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": "tres punto cinco",
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 1500000,
+      "ingreso_hogar_smmlv": 3.0,
+      "estrato": 3,
+      "distancia_km": 6,
+      "solicita": "ambos"
+    }
+  },
+  {
+    "id": "S15",
+    "categoria": "abstención/extremo",
+    "entrada": {
+      "id_estudiante": "SIM-15",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 1,
+      "promedio": null,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 1500000,
+      "ingreso_hogar_smmlv": 1.8,
+      "estrato": 2,
+      "distancia_km": 2,
+      "solicita": "ambos"
+    }
+  }
+]

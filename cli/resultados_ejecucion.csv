@@ -1,0 +1,6 @@
+id,estado,obtenido,motivo_falla,salida_completa
+R01,PASA,fin=alto aca=medio | cuotas=4 beca=True bono=True tutoria=academica,,"{""S1"": ""valido"", ""S2"": {""riesgo_financiero"": ""alto"", ""riesgo_academico"": ""medio""}, ""S3"": {""decision"": ""plan"", ""cuotas"": 4, ""beca_alimentacion"": true, ""bono_transporte"": true, ""tutoria"": ""academica""}}"
+R02,PASA,fin=bajo aca=bajo | cuotas=0 beca=False bono=False tutoria=orientacion,,"{""S1"": ""valido"", ""S2"": {""riesgo_financiero"": ""bajo"", ""riesgo_academico"": ""bajo""}, ""S3"": {""decision"": ""plan"", ""cuotas"": 0, ""beca_alimentacion"": false, ""bono_transporte"": false, ""tutoria"": ""orientacion""}}"
+S06,PASA,abstener(datos_contradictorios: estrato),,"{""S1"": {""decision"": ""abstener"", ""motivo"": ""datos_contradictorios"", ""campo"": ""estrato""}, ""S2"": null, ""S3"": null}"
+S13,PASA,error(tipo_invalido: promedio),,"{""S1"": {""decision"": ""error"", ""motivo"": ""tipo_invalido"", ""campo"": ""promedio""}, ""S2"": null, ""S3"": null}"
+S15,PASA,fin=alto aca=sin_datos | cuotas=4 beca=True bono=False tutoria=orientacion,,"{""S1"": ""valido"", ""S2"": {""riesgo_financiero"": ""alto"", ""riesgo_academico"": ""sin_datos""}, ""S3"": {""decision"": ""plan"", ""cuotas"": 4, ""beca_alimentacion"": true, ""bono_transporte"": false, ""tutoria"": ""orientacion""}}"

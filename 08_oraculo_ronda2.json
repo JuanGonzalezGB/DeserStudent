@@ -1,0 +1,77 @@
+{
+  "A01": {
+    "decision": "error",
+    "motivo": "tipo_invalido"
+  },
+  "A02": {
+    "decision": "plan",
+    "cuotas": 0,
+    "beca_alimentacion": false,
+    "bono_transporte": false,
+    "tutoria": "orientacion"
+  },
+  "A03": {
+    "decision": "abstener",
+    "motivo": "datos_contradictorios"
+  },
+  "A04": {
+    "decision": "error",
+    "motivo": "fuera_de_rango"
+  },
+  "A05": {
+    "decision": "abstener",
+    "motivo": "campo_faltante"
+  },
+  "A06": {
+    "decision": "plan",
+    "cuotas": 4,
+    "beca_alimentacion": true,
+    "bono_transporte": false,
+    "tutoria": "orientacion"
+  },
+  "A07": {
+    "decision": "abstener",
+    "motivo": "fuera_de_poblacion"
+  },
+  "A08": {
+    "decision": "error",
+    "motivo": "fuera_de_rango"
+  },
+  "A09": {
+    "decision": "abstener",
+    "motivo": "campo_faltante"
+  },
+  "A10": {
+    "decision": "plan",
+    "cuotas": 0,
+    "beca_alimentacion": false,
+    "bono_transporte": false,
+    "tutoria": "academica_prioritaria"
+  },
+  "A11": {
+    "decision": "error",
+    "motivo": "valor_no_permitido"
+  },
+  "A12": {
+    "decision": "error",
+    "motivo": "fuera_de_rango"
+  },
+  "A13": {
+    "decision": "plan",
+    "cuotas": 0,
+    "beca_alimentacion": false,
+    "bono_transporte": false,
+    "tutoria": "academica_prioritaria"
+  },
+  "A14": {
+    "decision": "abstener",
+    "motivo": "fuera_de_poblacion"
+  },
+  "A15": {
+    "decision": "plan",
+    "cuotas": 0,
+    "beca_alimentacion": false,
+    "bono_transporte": false,
+    "tutoria": "ninguna"
+  }
+}

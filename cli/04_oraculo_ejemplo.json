@@ -1,0 +1,61 @@
+{
+  "R01": {
+    "S1": "valido",
+    "S2": {
+      "riesgo_financiero": "alto",
+      "riesgo_academico": "medio"
+    },
+    "S3": {
+      "decision": "plan",
+      "cuotas": 4,
+      "beca_alimentacion": true,
+      "bono_transporte": true,
+      "tutoria": "academica"
+    }
+  },
+  "R02": {
+    "S1": "valido",
+    "S2": {
+      "riesgo_financiero": "bajo",
+      "riesgo_academico": "bajo"
+    },
+    "S3": {
+      "decision": "plan",
+      "cuotas": 0,
+      "beca_alimentacion": false,
+      "bono_transporte": false,
+      "tutoria": "orientacion"
+    }
+  },
+  "S06": {
+    "S1": {
+      "decision": "abstener",
+      "motivo": "datos_contradictorios"
+    },
+    "S2": null,
+    "S3": null
+  },
+  "S13": {
+    "S1": {
+      "decision": "error",
+      "motivo": "tipo_invalido",
+      "campo": "promedio"
+    },
+    "S2": null,
+    "S3": null
+  },
+  "S15": {
+    "S1": "valido",
+    "S2": {
+      "riesgo_financiero": "alto",
+      "riesgo_academico": "sin_datos"
+    },
+    "S3": {
+      "decision": "plan",
+      "cuotas": 4,
+      "beca_alimentacion": true,
+      "bono_transporte": false,
+      "tutoria": "orientacion"
+    }
+  }
+}

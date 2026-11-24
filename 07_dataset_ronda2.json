@@ -1,0 +1,302 @@
+[
+  {
+    "id": "A01",
+    "origen": "simulado (Gemini)",
+    "categoria": "tipo inválido",
+    "entrada": {
+      "id_estudiante": "EST-A01",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": "primer semestre",
+      "promedio": 3.8,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 0,
+      "ingreso_hogar_smmlv": 1.5,
+      "estrato": 2,
+      "distancia_km": 3.0,
+      "solicita": "tutoria"
+    },
+    "por_que_es_dificil": "Semestre escrito como texto."
+  },
+  {
+    "id": "A02",
+    "origen": "simulado (Gemini)",
+    "categoria": "extremo",
+    "entrada": {
+      "id_estudiante": "EST-A02",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": 3.5,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 1500000,
+      "ingreso_hogar_smmlv": 3.0,
+      "estrato": 3,
+      "distancia_km": 4.0,
+      "solicita": "tutoria"
+    },
+    "por_que_es_dificil": "Promedio exactamente en el umbral 3.5."
+  },
+  {
+    "id": "A03",
+    "origen": "simulado (Gemini)",
+    "categoria": "contradictorio",
+    "entrada": {
+      "id_estudiante": "EST-A03",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 3,
+      "promedio": 3.2,
+      "materias_inscritas": 4,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 500000,
+      "ingreso_hogar_smmlv": 18.0,
+      "estrato": 1,
+      "distancia_km": 2.0,
+      "solicita": "financiero"
+    },
+    "por_que_es_dificil": "Estrato 1 con ingreso de 18 SMMLV."
+  },
+  {
+    "id": "A04",
+    "origen": "simulado (Gemini)",
+    "categoria": "fuera de rango",
+    "entrada": {
+      "id_estudiante": "EST-A04",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 2,
+      "promedio": 4.0,
+      "materias_inscritas": 0,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 0,
+      "ingreso_hogar_smmlv": 2.0,
+      "estrato": 2,
+      "distancia_km": 1.0,
+      "solicita": "tutoria"
+    },
+    "por_que_es_dificil": "Cero materias inscritas."
+  },
+  {
+    "id": "A05",
+    "origen": "simulado (Gemini)",
+    "categoria": "incompleto",
+    "entrada": {
+      "id_estudiante": "EST-A05",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 5,
+      "promedio": 2.8,
+      "materias_inscritas": 5,
+      "materias_perdidas": 2,
+      "saldo_pendiente": 3000000,
+      "ingreso_hogar_smmlv": 1.0,
+      "estrato": 1,
+      "distancia_km": 10.0,
+      "solicita": null
+    },
+    "por_que_es_dificil": "Falta el campo solicita."
+  },
+  {
+    "id": "A06",
+    "origen": "simulado (Gemini)",
+    "categoria": "extremo",
+    "entrada": {
+      "id_estudiante": "EST-A06",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 3,
+      "promedio": 4.0,
+      "materias_inscritas": 6,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 1,
+      "ingreso_hogar_smmlv": 2.0,
+      "estrato": 2,
+      "distancia_km": 4.99,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Varios umbrales a la vez: saldo $1, ingreso 2.0, distancia 4.99 km."
+  },
+  {
+    "id": "A07",
+    "origen": "simulado (Gemini)",
+    "categoria": "otra población",
+    "entrada": {
+      "id_estudiante": "EST-A07",
+      "nivel": "pregrado",
+      "matriculado": false,
+      "semestre": 1,
+      "promedio": null,
+      "materias_inscritas": 4,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 0,
+      "ingreso_hogar_smmlv": 1.0,
+      "estrato": 1,
+      "distancia_km": 8.0,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "No matriculado, primer semestre sin promedio."
+  },
+  {
+    "id": "A08",
+    "origen": "simulado (Gemini)",
+    "categoria": "fuera de rango",
+    "entrada": {
+      "id_estudiante": "EST-A08",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 2,
+      "promedio": 3.8,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 0,
+      "ingreso_hogar_smmlv": 3.0,
+      "estrato": 3,
+      "distancia_km": -5.0,
+      "solicita": "financiero"
+    },
+    "por_que_es_dificil": "Distancia negativa."
+  },
+  {
+    "id": "A09",
+    "origen": "simulado (Gemini)",
+    "categoria": "incompleto",
+    "entrada": {
+      "id_estudiante": "EST-A09",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 2,
+      "promedio": null,
+      "materias_inscritas": 4,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 1000000,
+      "ingreso_hogar_smmlv": 1.5,
+      "estrato": 2,
+      "distancia_km": 6.0,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Promedio vacío en semestre 2 (solo se permite en semestre 1)."
+  },
+  {
+    "id": "A10",
+    "origen": "simulado (Gemini)",
+    "categoria": "extremo",
+    "entrada": {
+      "id_estudiante": "EST-A10",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": 1.2,
+      "materias_inscritas": 8,
+      "materias_perdidas": 8,
+      "saldo_pendiente": 0,
+      "ingreso_hogar_smmlv": 5.0,
+      "estrato": 4,
+      "distancia_km": 2.0,
+      "solicita": "tutoria"
+    },
+    "por_que_es_dificil": "Perdió todas las materias (8 de 8)."
+  },
+  {
+    "id": "A11",
+    "origen": "simulado (Gemini)",
+    "categoria": "valor no permitido",
+    "entrada": {
+      "id_estudiante": "EST-A11",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 3,
+      "promedio": 4.1,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 0,
+      "ingreso_hogar_smmlv": 1.0,
+      "estrato": 1,
+      "distancia_km": 12.0,
+      "solicita": "beca_completa"
+    },
+    "por_que_es_dificil": "Valor de solicita fuera de la lista."
+  },
+  {
+    "id": "A12",
+    "origen": "simulado (Gemini)",
+    "categoria": "fuera de rango",
+    "entrada": {
+      "id_estudiante": "EST-A12",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 6,
+      "promedio": 3.9,
+      "materias_inscritas": 6,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 25000000,
+      "ingreso_hogar_smmlv": 2.0,
+      "estrato": 2,
+      "distancia_km": 3.0,
+      "solicita": "financiero"
+    },
+    "por_que_es_dificil": "Saldo por encima del tope."
+  },
+  {
+    "id": "A13",
+    "origen": "simulado (Gemini)",
+    "categoria": "extremo",
+    "entrada": {
+      "id_estudiante": "EST-A13",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 2,
+      "promedio": 2.5,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 0,
+      "ingreso_hogar_smmlv": 6.0,
+      "estrato": 4,
+      "distancia_km": 1.0,
+      "solicita": "financiero"
+    },
+    "por_que_es_dificil": "Riesgo académico alto sin pedir tutoría."
+  },
+  {
+    "id": "A14",
+    "origen": "simulado (Gemini)",
+    "categoria": "otra población",
+    "entrada": {
+      "id_estudiante": "EST-A14",
+      "nivel": "doctorado",
+      "matriculado": true,
+      "semestre": 1,
+      "promedio": null,
+      "materias_inscritas": 3,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 5000000,
+      "ingreso_hogar_smmlv": 1.0,
+      "estrato": 1,
+      "distancia_km": 15.0,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Nivel doctorado."
+  },
+  {
+    "id": "A15",
+    "origen": "simulado (Gemini)",
+    "categoria": "extremo",
+    "entrada": {
+      "id_estudiante": "EST-A15",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 3,
+      "promedio": 4.2,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 0,
+      "ingreso_hogar_smmlv": 1.0,
+      "estrato": 1,
+      "distancia_km": 10.0,
+      "solicita": "financiero"
+    },
+    "por_que_es_dificil": "Pide apoyo financiero pero no debe nada."
+  }
+]

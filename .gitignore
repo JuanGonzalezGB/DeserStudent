@@ -1,0 +1,55 @@
+# Entornos virtuales y variables locales
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# Python y herramientas de analisis
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Pruebas y cobertura
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# SQLite: bases temporales/auxiliares (solo data/simulador.db de referencia se entrega)
+*.db
+!simulador-desercion/data/simulador.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Empaquetados de entrega y temporales
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+*.log
+*.tmp
+*.bak
+*~
+*.swp
+*.swo
+
+# Node / herramientas frontend opcionales
+node_modules/
+
+# Editores y sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

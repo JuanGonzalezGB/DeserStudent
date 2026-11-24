@@ -1,0 +1,59 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+*{box-sizing:border-box;margin:0}
+body{width:1700px;height:830px;background:#fff;font-family:"DejaVu Sans",Arial,sans-serif;color:#1d2433;padding:40px 48px}
+h1{font-size:34px;margin-bottom:6px}
+.sub{font-size:19px;color:#555;margin-bottom:26px}
+.prob{border:2px dashed #b45309;background:#fff7ed;border-radius:12px;padding:14px 20px;font-size:18px;margin-bottom:34px}
+.prob b{color:#b45309}
+.row{display:flex;align-items:stretch;gap:0}
+.box{border-radius:14px;padding:16px 18px;font-size:16px;line-height:1.45}
+.e{background:#eef2ff;border:3px solid #4f46e5;width:300px}
+.step{background:#ecfeff;border:3px solid #0e7490;width:270px;text-align:center;display:flex;flex-direction:column;justify-content:center}
+.step .n{font-size:15px;color:#0e7490;font-weight:bold;letter-spacing:1px}
+.step .t{font-size:24px;font-weight:bold;margin:4px 0 8px}
+.out{background:#f0fdf4;border:3px solid #15803d;width:300px}
+.arrow{width:60px;display:flex;align-items:center;justify-content:center;font-size:40px;color:#334155}
+.lab{font-weight:bold;font-size:18px;margin-bottom:6px}
+.e .lab{color:#4f46e5}.out .lab{color:#15803d}
+.srow{display:flex;margin-top:0}
+.scol{display:flex;flex-direction:column;align-items:center}
+.down{font-size:34px;color:#334155;height:46px;line-height:46px}
+.s{background:#f8fafc;border:2px solid #64748b;border-radius:12px;padding:12px 14px;font-size:15px;line-height:1.45;width:270px}
+.s .lab{font-size:17px;color:#334155}
+.bad{color:#b91c1c;font-weight:bold}
+ul{padding-left:18px}
+.legend{margin-top:30px;font-size:16px;color:#444}
+</style></head><body>
+<h1>Flujo del problema: Portal de Acompañamiento</h1>
+<div class="sub">El sistema como cadena de pasos. Cada paso tiene su contrato: qué recibe (E) y qué entrega (S).</div>
+<div class="prob"><b>Problema:</b> estudiantes en riesgo de abandonar por dificultades económicas o académicas no reciben a tiempo el apoyo que les corresponde (cuotas, beca, bono de transporte, tutoría).</div>
+
+<div class="row">
+ <div class="box e"><div class="lab">E · Entrada</div>Perfil del estudiante:
+  <ul><li>nivel, matriculado, semestre</li><li>promedio, materias inscritas / perdidas</li><li>saldo pendiente, ingreso (SMMLV), estrato</li><li>distancia (km)</li><li>solicita: financiero / tutoría / ambos</li></ul></div>
+ <div class="arrow">➜</div>
+ <div class="box step"><div class="n">PASO 1</div><div class="t">Validar perfil</div>Campos, tipos, rangos, población y coherencia</div>
+ <div class="arrow">➜</div>
+ <div class="box step"><div class="n">PASO 2</div><div class="t">Clasificar riesgo</div>Riesgo financiero y riesgo académico</div>
+ <div class="arrow">➜</div>
+ <div class="box step"><div class="n">PASO 3</div><div class="t">Recomendar plan</div>Beneficios según riesgo y solicitud</div>
+ <div class="arrow">➜</div>
+ <div class="box out"><div class="lab">S · Salida final</div>Plan de apoyo propuesto al estudiante; un asesor lo formaliza.
+  <br><br><b>o</b> remisión a asesor humano<br><b>o</b> error controlado</div>
+</div>
+
+<div class="srow" style="margin-left:360px">
+ <div class="scol"><div class="down">↓</div><div class="s"><div class="lab">S1</div>
+  ✔ <b>válido</b> → sigue al paso 2<br>
+  <span class="bad">✖ error</span>: tipo inválido, fuera de rango, valor no permitido<br>
+  <span class="bad">⏸ abstener</span>: campo faltante, datos contradictorios, fuera de población → <b>asesor humano</b></div></div>
+ <div style="width:60px"></div>
+ <div class="scol"><div class="down">↓</div><div class="s"><div class="lab">S2</div>
+  Riesgo financiero: alto / medio / bajo<br>
+  Riesgo académico: alto / medio / bajo / sin datos (semestre 1)</div></div>
+ <div style="width:60px"></div>
+ <div class="scol"><div class="down">↓</div><div class="s"><div class="lab">S3</div>
+  Cuotas (0 o 4)<br>Beca de alimentación (sí/no)<br>Bono de transporte (sí/no)<br>Tutoría: prioritaria / académica / orientación / ninguna</div></div>
+</div>
+<div class="legend">Si S1 no es "válido", el flujo se detiene ahí: nunca se generan beneficios con datos dudosos. Las pruebas comparan la E y la S de cada paso contra el oráculo.</div>
+</body></html>

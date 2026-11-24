@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pruebas de estrés · Portal de Acompañamiento</title>
+<style>
+  :root {
+    --fondo: #f6f7f9; --tarjeta: #ffffff; --texto: #1f2933; --suave: #616e7c;
+    --borde: #d9dee5; --azul: #2563eb; --verde: #15803d; --verde-bg: #e7f6ec;
+    --rojo: #b91c1c; --rojo-bg: #fdecec; --ambar: #b45309; --ambar-bg: #fff4e0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, "Segoe UI", Roboto, sans-serif; background: var(--fondo); color: var(--texto); }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 12px 24px; background: var(--tarjeta); border-bottom: 1px solid var(--borde); }
+  header strong { font-size: 15px; }
+  #contador { color: var(--suave); font-size: 14px; }
+  #progreso { height: 4px; background: var(--azul); width: 0; transition: width .3s; }
+
+  main { max-width: 1000px; margin: 0 auto; padding: 32px 24px 100px; }
+  .slide { display: none; animation: aparecer .3s ease; }
+  .slide.activa { display: block; }
+  @keyframes aparecer { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+  h1 { font-size: 40px; margin: 40px 0 8px; }
+  h2 { font-size: 28px; margin: 0 0 20px; }
+  .subtitulo { font-size: 20px; color: var(--suave); margin: 0 0 32px; }
+  p, li { font-size: 18px; line-height: 1.55; }
+
+  .tarjeta { background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 10px; padding: 20px; }
+  .grilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+
+  /* Diagrama de pasos */
+  .cadena { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; margin: 24px 0; }
+  .paso { flex: 1; min-width: 150px; background: var(--tarjeta); border: 2px solid var(--azul); border-radius: 10px; padding: 14px; text-align: center; }
+  .paso b { display: block; color: var(--azul); font-size: 14px; }
+  .paso span { font-size: 17px; }
+  .flecha { align-self: center; font-size: 24px; color: var(--suave); }
+  .nota { background: var(--ambar-bg); border-left: 4px solid var(--ambar); padding: 12px 16px; border-radius: 6px; }
+
+  /* Métricas */
+  .metrica { text-align: center; }
+  .metrica .numero { font-size: 44px; font-weight: 700; }
+  .metrica .numero.ok { color: var(--verde); }
+  .metrica .numero.alerta { color: var(--ambar); }
+  .metrica .etiqueta { color: var(--suave); font-size: 15px; }
+  .metrica p { font-size: 15px; margin: 8px 0 0; }
+
+  /* Tablas */
+  .filtros { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filtros button { border: 1px solid var(--borde); background: var(--tarjeta); padding: 6px 14px; border-radius: 20px; cursor: pointer; font-size: 14px; }
+  .filtros button.activo { background: var(--azul); color: #fff; border-color: var(--azul); }
+  .tabla-cont { overflow-x: auto; background: var(--tarjeta); border: 1px solid var(--borde); border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--borde); }
+  th { background: #eef1f5; font-weight: 600; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #f1f5ff; }
+  tr.falla { background: var(--rojo-bg); }
+  .estado { font-weight: 700; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+  .estado.PASA { background: var(--verde-bg); color: var(--verde); }
+  .estado.FALLA { background: var(--rojo-bg); color: var(--rojo); }
+  code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; font-size: .92em; }
+  #detalle { margin-top: 12px; min-height: 60px; }
+
+  /* Comparación A03 */
+  .comparar { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .comparar .tarjeta h3 { margin-top: 0; }
+  .cubierto { border-top: 4px solid var(--verde); }
+  .hueco { border-top: 4px solid var(--rojo); }
+  .revelar { margin-top: 16px; background: var(--azul); color: #fff; border: 0; padding: 10px 18px; border-radius: 8px; font-size: 16px; cursor: pointer; }
+  .oculto { display: none; }
+
+  ul.garantias { list-style: none; padding: 0; }
+  ul.garantias li { padding: 10px 0 10px 36px; position: relative; border-bottom: 1px solid var(--borde); }
+  ul.garantias li::before { content: "✔"; position: absolute; left: 6px; color: var(--verde); font-weight: 700; }
+  blockquote { font-size: 21px; border-left: 5px solid var(--azul); margin: 28px 0 0; padding: 12px 20px; background: var(--tarjeta); border-radius: 0 10px 10px 0; }
+
+  nav { position: fixed; bottom: 0; left: 0; right: 0; display: flex; justify-content: center; gap: 12px; padding: 12px; background: var(--tarjeta); border-top: 1px solid var(--borde); }
+  nav button { padding: 10px 22px; font-size: 16px; border-radius: 8px; border: 1px solid var(--borde); background: var(--tarjeta); cursor: pointer; }
+  nav button:hover { border-color: var(--azul); color: var(--azul); }
+  .ayuda { position: fixed; bottom: 70px; right: 16px; font-size: 12px; color: var(--suave); }
+
+  @media (max-width: 640px) {
+    h1 { font-size: 30px; } h2 { font-size: 22px; }
+    .comparar { grid-template-columns: 1fr; }
+    .flecha { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <strong>Pruebas de estrés · Motor del Portal de Acompañamiento</strong>
+  <span id="contador"></span>
+</header>
+<div id="progreso"></div>
+
+<main>
+
+  <!-- 1. Portada -->
+  <section class="slide">
+    <h1>Pruebas de estrés de un sistema con datos</h1>
+    <p class="subtitulo">Motor de recomendación del Portal de Acompañamiento estudiantil</p>
+    <div class="grilla">
+      <div class="tarjeta metrica"><div class="numero ok">89/89</div><div class="etiqueta">pruebas unitarias</div></div>
+      <div class="tarjeta metrica"><div class="numero ok">20/20</div><div class="etiqueta">ronda 1 (casos propios)</div></div>
+      <div class="tarjeta metrica"><div class="numero alerta">14/15</div><div class="etiqueta">ronda 2 (casos de Gemini)</div></div>
+    </div>
+  </section>
+
+  <!-- 2. El sistema -->
+  <section class="slide">
+    <h2>1. Qué se probó</h2>
+    <p>El motor recibe el perfil de un estudiante (E) y lo procesa en tres pasos encadenados:</p>
+    <div class="cadena">
+      <div class="paso"><b>Entrada E</b><span>Perfil del estudiante</span></div>
+      <div class="flecha">→</div>
+      <div class="paso"><b>Paso 1 · S1</b><span>Validar perfil</span></div>
+      <div class="flecha">→</div>
+      <div class="paso"><b>Paso 2 · S2</b><span>Clasificar riesgo</span></div>
+      <div class="flecha">→</div>
+      <div class="paso"><b>Paso 3 · S3</b><span>Recomendar plan</span></div>
+    </div>
+    <p class="nota"><b>Cortocircuito:</b> si S1 no es <code>valido</code>, S2 y S3 quedan en <code>null</code>.
+      El sistema nunca otorga beneficios con datos malos: responde <code>error</code> o <code>abstener</code>
+      y remite el caso a un asesor humano.</p>
+  </section>
+
+  <!-- 3. Tres niveles -->
+  <section class="slide">
+    <h2>2. Tres niveles de prueba</h2>
+    <div class="grilla">
+      <div class="tarjeta metrica">
+        <div class="numero ok">89</div><div class="etiqueta">pruebas unitarias (pytest)</div>
+        <p>Cada regla por separado: umbrales exactos (2.0 vs 2.01, 4.99 vs 5.0 km, 2.99 vs 3.0), tipos inválidos, nulos, rangos, NaN, entradas que no son diccionario.</p>
+      </div>
+      <div class="tarjeta metrica">
+        <div class="numero ok">20/20</div><div class="etiqueta">Ronda 1 · diseñados por nosotros</div>
+        <p>5 perfiles reales típicos + 15 simulados difíciles.</p>
+      </div>
+      <div class="tarjeta metrica">
+        <div class="numero alerta">14/15</div><div class="etiqueta">Ronda 2 · generados por Gemini</div>
+        <p>Prueba “ciega”: casos que no diseñamos nosotros.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. Ronda 1 -->
+  <section class="slide">
+    <h2>3. Resultados de la ronda 1</h2>
+    <div class="filtros" data-tabla="r1"></div>
+    <div class="tabla-cont"><table id="tabla-r1"></table></div>
+    <p style="font-size:14px;color:var(--suave)">Haz clic en una fila para ver por qué el caso es difícil.</p>
+    <div id="detalle-r1" class="tarjeta oculto"></div>
+  </section>
+
+  <!-- 5. Casos destacados -->
+  <section class="slide">
+    <h2>4. Casos que vale la pena destacar</h2>
+    <div class="grilla">
+      <div class="tarjeta"><b>S01 y S02 · Datos faltantes</b><p>Falta el promedio o el saldo y el sistema <b>se abstiene</b> en lugar de asumir 0. Cumple la garantía “no inventa datos”.</p></div>
+      <div class="tarjeta"><b>S15 · Primer semestre</b><p>No tener promedio es legítimo en semestre 1: el sistema <b>sí genera un plan</b>, con riesgo académico <code>sin_datos</code>.</p></div>
+      <div class="tarjeta"><b>S06 · Contradicción</b><p>Estrato 6 con ingreso de 0.3 SMMLV se marca como <code>datos_contradictorios</code>: posible error o fraude.</p></div>
+    </div>
+  </section>
+
+  <!-- 6. Ronda 2 -->
+  <section class="slide">
+    <h2>5. Resultados de la ronda 2 (Gemini)</h2>
+    <div class="filtros" data-tabla="r2"></div>
+    <div class="tabla-cont"><table id="tabla-r2"></table></div>
+    <div id="detalle-r2" class="tarjeta oculto"></div>
+  </section>
+
+  <!-- 7. Hallazgo A03 -->
+  <section class="slide">
+    <h2>6. El hallazgo: caso A03</h2>
+    <div class="comparar">
+      <div class="tarjeta cubierto">
+        <h3>S06 · cubierto por el contrato</h3>
+        <p>Estrato <b>6</b> con ingreso de <b>0.3</b> SMMLV</p>
+        <p>Regla: “estrato ≥ 5 con ingreso &lt; 1” → <code>abstener</code></p>
+        <p>✅ Detectado</p>
+      </div>
+      <div class="tarjeta hueco">
+        <h3>A03 · NO cubierto</h3>
+        <p>Estrato <b>1</b> con ingreso de <b>18</b> SMMLV</p>
+        <p>Como el estrato es ≤ 2, el sistema lo clasifica con riesgo financiero <b>alto</b>.</p>
+        <p>❌ Recibe <b>beca de alimentación + 4 cuotas</b></p>
+      </div>
+    </div>
+    <button class="revelar" id="btn-conclusion">¿Es un error del código?</button>
+    <div id="conclusion" class="oculto">
+      <p class="nota" style="margin-top:16px">
+        <b>No.</b> El motor cumple el contrato al pie de la letra: el problema está en el <b>contrato</b>, no en el código.
+        Las pruebas de estrés con datos externos sacaron a la luz un hueco en la especificación que los casos propios no encontraron.
+      </p>
+      <p><b>Por qué no se “corrigió”:</b> cambiar el código sin cambiar antes el contrato sería ocultar el hallazgo.</p>
+      <p><b>Propuesta:</b> agregar al contrato la regla <code>estrato ≤ 2 y ingreso &gt; X SMMLV → abstener(datos_contradictorios)</code>
+        y después actualizar el motor y las pruebas.</p>
+    </div>
+  </section>
+
+  <!-- 8. Cierre -->
+  <section class="slide">
+    <h2>7. Conclusión</h2>
+    <ul class="garantias">
+      <li>Nunca lanza una excepción: toda entrada termina en <code>plan</code>, <code>abstener</code> o <code>error</code>.</li>
+      <li>Nunca inventa datos que faltan (no asume saldo 0 ni promedio 0).</li>
+      <li>Nunca otorga beneficios fuera de la población (posgrado, no matriculados).</li>
+      <li>Respeta los umbrales inclusivos (≤ 2 SMMLV, ≥ 5 km).</li>
+    </ul>
+    <blockquote>Las pruebas de estrés con datos de otra fuente encontraron un hueco en el contrato (A03): para eso sirven.</blockquote>
+  </section>
+
+</main>
+
+<span class="ayuda">← → para navegar</span>
+<nav>
+  <button id="anterior">← Anterior</button>
+  <button id="siguiente">Siguiente →</button>
+</nav>
+
+<script>
+  // ---------------- Datos (salida real de ejecutar_pruebas.py) ----------------
+  const RONDA1 = [
+    ["R01", "PASA", "plan · fin=alto aca=medio · cuotas=4 beca bono · tutoría académica", "Perfil más común: bajo ingreso, una materia perdida, pide ambos apoyos."],
+    ["R02", "PASA", "plan · fin=bajo aca=bajo · sin beneficios · orientación", "Estudiante al día que solo quiere orientación."],
+    ["R03", "PASA", "plan · fin=medio aca=alto · cuotas=4 · tutoría prioritaria", "Primer semestre con bajo rendimiento: activa tutoría prioritaria."],
+    ["R04", "PASA", "plan · fin=alto aca=bajo · cuotas=4 beca bono", "Solo pide apoyo financiero, vive lejos."],
+    ["R05", "PASA", "plan · fin=medio aca=medio · cuotas=4 bono · tutoría académica", "Riesgo medio en ambas dimensiones."],
+    ["S01", "PASA", "abstener (campo_faltante: promedio)", "Falta el promedio: sin él no se puede clasificar el riesgo académico."],
+    ["S02", "PASA", "abstener (campo_faltante: saldo_pendiente)", "Pide apoyo financiero pero no hay saldo: el sistema podría asumir 0 y negar el apoyo."],
+    ["S03", "PASA", "error (fuera_de_rango: promedio)", "Promedio en escala 0-10 en lugar de 0-5."],
+    ["S04", "PASA", "error (fuera_de_rango: saldo_pendiente)", "Saldo negativo (saldo a favor) mal cargado."],
+    ["S05", "PASA", "abstener (datos_contradictorios: materias_perdidas)", "Perdió más materias de las que inscribió."],
+    ["S06", "PASA", "abstener (datos_contradictorios: estrato)", "Estrato 6 con ingreso menor a 1 SMMLV: posible error o fraude."],
+    ["S07", "PASA", "abstener (fuera_de_poblacion: matriculado)", "No está matriculado este semestre."],
+    ["S08", "PASA", "abstener (fuera_de_poblacion: nivel)", "Estudiante de posgrado: el sistema se diseñó para pregrado."],
+    ["S09", "PASA", "plan · fin=bajo aca=medio · tutoría académica", "Promedio exactamente en el umbral 3.0."],
+    ["S10", "PASA", "plan · fin=alto aca=bajo · cuotas=4 beca", "Ingreso exactamente en el umbral de 2 SMMLV."],
+    ["S11", "PASA", "plan · fin=medio aca=bajo · cuotas=4 bono", "Distancia exactamente en el umbral de 5 km."],
+    ["S12", "PASA", "error (fuera_de_rango: saldo_pendiente)", "Saldo absurdo (ceros de más)."],
+    ["S13", "PASA", "error (tipo_invalido: promedio)", "Promedio escrito como texto: “tres punto cinco”."],
+    ["S14", "PASA", "error (fuera_de_rango: semestre)", "Semestre mayor al máximo del programa."],
+    ["S15", "PASA", "plan · fin=alto aca=sin_datos · cuotas=4 beca · orientación", "Primer semestre sin notas: el promedio vacío es legítimo."],
+  ];
+  const RONDA2 = [
+    ["A01", "PASA", "error (tipo_invalido: semestre)", "Semestre escrito como texto."],
+    ["A02", "PASA", "plan · fin=medio aca=bajo · orientación", "Promedio exactamente en el umbral 3.5."],
+    ["A03", "FALLA", "plan · fin=alto aca=medio · cuotas=4 beca", "Estrato 1 con ingreso de 18 SMMLV. Esperado: abstener (datos_contradictorios). Obtenido: plan con beca."],
+    ["A04", "PASA", "error (fuera_de_rango: materias_inscritas)", "Cero materias inscritas."],
+    ["A05", "PASA", "abstener (campo_faltante: solicita)", "Falta el campo solicita."],
+    ["A06", "PASA", "plan · fin=alto aca=bajo · cuotas=4 beca · orientación", "Varios umbrales a la vez: saldo $1, ingreso 2.0, distancia 4.99 km."],
+    ["A07", "PASA", "abstener (fuera_de_poblacion: matriculado)", "No matriculado, primer semestre sin promedio."],
+    ["A08", "PASA", "error (fuera_de_rango: distancia_km)", "Distancia negativa."],
+    ["A09", "PASA", "abstener (campo_faltante: promedio)", "Promedio vacío en semestre 2 (solo se permite en semestre 1)."],
+    ["A10", "PASA", "plan · fin=bajo aca=alto · tutoría prioritaria", "Perdió todas las materias (8 de 8)."],
+    ["A11", "PASA", "error (valor_no_permitido: solicita)", "Valor de solicita fuera de la lista."],
+    ["A12", "PASA", "error (fuera_de_rango: saldo_pendiente)", "Saldo por encima del tope."],
+    ["A13", "PASA", "plan · fin=bajo aca=alto · tutoría prioritaria", "Riesgo académico alto sin pedir tutoría."],
+    ["A14", "PASA", "abstener (fuera_de_poblacion: nivel)", "Nivel doctorado."],
+    ["A15", "PASA", "plan · sin beneficios", "Pide apoyo financiero pero no debe nada."],
+  ];
+  const DATOS = { r1: RONDA1, r2: RONDA2 };
+
+  // ---------------- Tablas con filtro y detalle ----------------
+  function tipoDe(obtenido) {
+    return obtenido.startsWith("plan") ? "plan" : obtenido.startsWith("error") ? "error" : "abstener";
+  }
+
+  function pintarTabla(clave, filtro) {
+    const filas = DATOS[clave].filter(f => filtro === "todos" || tipoDe(f[2]) === filtro || f[1] === filtro);
+    const tabla = document.getElementById("tabla-" + clave);
+    tabla.innerHTML = "<thead><tr><th>ID</th><th>Estado</th><th>Decisión del sistema</th></tr></thead><tbody>" +
+      filas.map(f => `<tr class="${f[1] === "FALLA" ? "falla" : ""}" data-id="${f[0]}">
+        <td><b>${f[0]}</b></td><td><span class="estado ${f[1]}">${f[1]}</span></td><td>${f[2]}</td></tr>`).join("") +
+      "</tbody>";
+    tabla.querySelectorAll("tbody tr").forEach(tr => tr.addEventListener("click", () => {
+      const f = DATOS[clave].find(x => x[0] === tr.dataset.id);
+      const det = document.getElementById("detalle-" + clave);
+      det.innerHTML = `<b>${f[0]}</b> · ${f[3]}`;
+      det.classList.remove("oculto");
+    }));
+  }
+
+  document.querySelectorAll(".filtros").forEach(cont => {
+    const clave = cont.dataset.tabla;
+    const opciones = { todos: "Todos", plan: "Plan", abstener: "Abstener", error: "Error" };
+    if (clave === "r2") opciones.FALLA = "Solo fallas";
+    Object.entries(opciones).forEach(([valor, texto], i) => {
+      const b = document.createElement("button");
+      b.textContent = texto;
+      if (i === 0) b.classList.add("activo");
+      b.addEventListener("click", () => {
+        cont.querySelectorAll("button").forEach(x => x.classList.remove("activo"));
+        b.classList.add("activo");
+        pintarTabla(clave, valor);
+      });
+      cont.appendChild(b);
+    });
+    pintarTabla(clave, "todos");
+  });
+
+  // ---------------- Revelar conclusión A03 ----------------
+  document.getElementById("btn-conclusion").addEventListener("click", e => {
+    document.getElementById("conclusion").classList.remove("oculto");
+    e.target.classList.add("oculto");
+  });
+
+  // ---------------- Navegación entre diapositivas ----------------
+  const slides = document.querySelectorAll(".slide");
+  let actual = 0;
+  function mostrar(i) {
+    actual = Math.max(0, Math.min(slides.length - 1, i));
+    slides.forEach((s, j) => s.classList.toggle("activa", j === actual));
+    document.getElementById("contador").textContent = `${actual + 1} / ${slides.length}`;
+    document.getElementById("progreso").style.width = `${100 * (actual + 1) / slides.length}%`;
+    window.scrollTo(0, 0);
+  }
+  document.getElementById("anterior").addEventListener("click", () => mostrar(actual - 1));
+  document.getElementById("siguiente").addEventListener("click", () => mostrar(actual + 1));
+  document.addEventListener("keydown", e => {
+    if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); mostrar(actual + 1); }
+    if (e.key === "ArrowLeft") mostrar(actual - 1);
+  });
+  mostrar(0);
+</script>
+</body>
+</html>

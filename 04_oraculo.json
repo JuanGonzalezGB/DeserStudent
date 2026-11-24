@@ -1,0 +1,109 @@
+{
+  "R01": {
+    "decision": "plan",
+    "cuotas": 4,
+    "beca_alimentacion": true,
+    "bono_transporte": true,
+    "tutoria": "academica"
+  },
+  "R02": {
+    "decision": "plan",
+    "cuotas": 0,
+    "beca_alimentacion": false,
+    "bono_transporte": false,
+    "tutoria": "orientacion"
+  },
+  "R03": {
+    "decision": "plan",
+    "cuotas": 4,
+    "beca_alimentacion": false,
+    "bono_transporte": false,
+    "tutoria": "academica_prioritaria"
+  },
+  "R04": {
+    "decision": "plan",
+    "cuotas": 4,
+    "beca_alimentacion": true,
+    "bono_transporte": true,
+    "tutoria": "ninguna"
+  },
+  "R05": {
+    "decision": "plan",
+    "cuotas": 4,
+    "beca_alimentacion": false,
+    "bono_transporte": true,
+    "tutoria": "academica"
+  },
+  "S01": {
+    "decision": "abstener",
+    "motivo": "campo_faltante"
+  },
+  "S02": {
+    "decision": "abstener",
+    "motivo": "campo_faltante"
+  },
+  "S03": {
+    "decision": "error",
+    "motivo": "fuera_de_rango"
+  },
+  "S04": {
+    "decision": "error",
+    "motivo": "fuera_de_rango"
+  },
+  "S05": {
+    "decision": "abstener",
+    "motivo": "datos_contradictorios"
+  },
+  "S06": {
+    "decision": "abstener",
+    "motivo": "datos_contradictorios"
+  },
+  "S07": {
+    "decision": "abstener",
+    "motivo": "fuera_de_poblacion"
+  },
+  "S08": {
+    "decision": "abstener",
+    "motivo": "fuera_de_poblacion"
+  },
+  "S09": {
+    "decision": "plan",
+    "cuotas": 0,
+    "beca_alimentacion": false,
+    "bono_transporte": false,
+    "tutoria": "academica"
+  },
+  "S10": {
+    "decision": "plan",
+    "cuotas": 4,
+    "beca_alimentacion": true,
+    "bono_transporte": false,
+    "tutoria": "ninguna"
+  },
+  "S11": {
+    "decision": "plan",
+    "cuotas": 4,
+    "beca_alimentacion": false,
+    "bono_transporte": true,
+    "tutoria": "ninguna"
+  },
+  "S12": {
+    "decision": "error",
+    "motivo": "fuera_de_rango"
+  },
+  "S13": {
+    "decision": "error",
+    "motivo": "tipo_invalido"
+  },
+  "S14": {
+    "decision": "error",
+    "motivo": "fuera_de_rango"
+  },
+  "S15": {
+    "decision": "plan",
+    "cuotas": 4,
+    "beca_alimentacion": true,
+    "bono_transporte": false,
+    "tutoria": "orientacion"
+  }
+}

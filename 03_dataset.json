@@ -1,0 +1,400 @@
+[
+  {
+    "id": "R01",
+    "origen": "real",
+    "categoria": "típico",
+    "entrada": {
+      "id_estudiante": "EST-1021",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 3,
+      "promedio": 3.2,
+      "materias_inscritas": 6,
+      "materias_perdidas": 1,
+      "saldo_pendiente": 2400000,
+      "ingreso_hogar_smmlv": 1.5,
+      "estrato": 2,
+      "distancia_km": 12,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Perfil más común: bajo ingreso, una materia perdida, pide ambos apoyos."
+  },
+  {
+    "id": "R02",
+    "origen": "real",
+    "categoria": "típico",
+    "entrada": {
+      "id_estudiante": "EST-0877",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 7,
+      "promedio": 4.1,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 0,
+      "ingreso_hogar_smmlv": 5,
+      "estrato": 4,
+      "distancia_km": 3,
+      "solicita": "tutoria"
+    },
+    "por_que_es_dificil": "Estudiante al día que solo quiere orientación."
+  },
+  {
+    "id": "R03",
+    "origen": "real",
+    "categoria": "típico",
+    "entrada": {
+      "id_estudiante": "EST-1450",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 1,
+      "promedio": 2.6,
+      "materias_inscritas": 6,
+      "materias_perdidas": 3,
+      "saldo_pendiente": 1800000,
+      "ingreso_hogar_smmlv": 2.5,
+      "estrato": 3,
+      "distancia_km": 4,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Primer semestre con bajo rendimiento: activa tutoría prioritaria."
+  },
+  {
+    "id": "R04",
+    "origen": "real",
+    "categoria": "típico",
+    "entrada": {
+      "id_estudiante": "EST-0632",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 5,
+      "promedio": 3.8,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 3200000,
+      "ingreso_hogar_smmlv": 1.0,
+      "estrato": 1,
+      "distancia_km": 25,
+      "solicita": "financiero"
+    },
+    "por_que_es_dificil": "Solo pide apoyo financiero, vive lejos."
+  },
+  {
+    "id": "R05",
+    "origen": "real",
+    "categoria": "típico",
+    "entrada": {
+      "id_estudiante": "EST-0998",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 9,
+      "promedio": 3.4,
+      "materias_inscritas": 4,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 900000,
+      "ingreso_hogar_smmlv": 3.5,
+      "estrato": 3,
+      "distancia_km": 8,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Riesgo medio en ambas dimensiones."
+  },
+  {
+    "id": "S01",
+    "origen": "simulado",
+    "categoria": "incompleto",
+    "entrada": {
+      "id_estudiante": "SIM-01",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 1500000,
+      "ingreso_hogar_smmlv": 3.0,
+      "estrato": 3,
+      "distancia_km": 6,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Falta el promedio: sin él no se puede clasificar el riesgo académico."
+  },
+  {
+    "id": "S02",
+    "origen": "simulado",
+    "categoria": "incompleto",
+    "entrada": {
+      "id_estudiante": "SIM-02",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": 3.8,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "ingreso_hogar_smmlv": 3.0,
+      "estrato": 3,
+      "distancia_km": 6,
+      "solicita": "financiero"
+    },
+    "por_que_es_dificil": "Pide apoyo financiero pero no hay saldo: el sistema podría asumir 0 y negar el apoyo."
+  },
+  {
+    "id": "S03",
+    "origen": "simulado",
+    "categoria": "fuera de rango",
+    "entrada": {
+      "id_estudiante": "SIM-03",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": 7.5,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 1500000,
+      "ingreso_hogar_smmlv": 3.0,
+      "estrato": 3,
+      "distancia_km": 6,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Promedio en escala 0-10 en lugar de 0-5 (dato de otra institución)."
+  },
+  {
+    "id": "S04",
+    "origen": "simulado",
+    "categoria": "fuera de rango",
+    "entrada": {
+      "id_estudiante": "SIM-04",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": 3.8,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": -500000,
+      "ingreso_hogar_smmlv": 3.0,
+      "estrato": 3,
+      "distancia_km": 6,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Saldo negativo (saldo a favor) mal cargado."
+  },
+  {
+    "id": "S05",
+    "origen": "simulado",
+    "categoria": "contradictorio",
+    "entrada": {
+      "id_estudiante": "SIM-05",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": 3.8,
+      "materias_inscritas": 3,
+      "materias_perdidas": 5,
+      "saldo_pendiente": 1500000,
+      "ingreso_hogar_smmlv": 3.0,
+      "estrato": 3,
+      "distancia_km": 6,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Perdió más materias de las que inscribió."
+  },
+  {
+    "id": "S06",
+    "origen": "simulado",
+    "categoria": "contradictorio",
+    "entrada": {
+      "id_estudiante": "SIM-06",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": 3.8,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 8000000,
+      "ingreso_hogar_smmlv": 0.3,
+      "estrato": 6,
+      "distancia_km": 6,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Estrato 6 con ingreso menor a 1 SMMLV: posible error o fraude, el sistema daría beca completa."
+  },
+  {
+    "id": "S07",
+    "origen": "simulado",
+    "categoria": "otra población",
+    "entrada": {
+      "id_estudiante": "SIM-07",
+      "nivel": "pregrado",
+      "matriculado": false,
+      "semestre": 4,
+      "promedio": 3.8,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 1500000,
+      "ingreso_hogar_smmlv": 3.0,
+      "estrato": 3,
+      "distancia_km": 6,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "No está matriculado este semestre: los beneficios no aplican."
+  },
+  {
+    "id": "S08",
+    "origen": "simulado",
+    "categoria": "otra población",
+    "entrada": {
+      "id_estudiante": "SIM-08",
+      "nivel": "posgrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": 3.8,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 9000000,
+      "ingreso_hogar_smmlv": 1.5,
+      "estrato": 3,
+      "distancia_km": 6,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Estudiante de posgrado: el sistema se diseñó para pregrado."
+  },
+  {
+    "id": "S09",
+    "origen": "simulado",
+    "categoria": "extremo",
+    "entrada": {
+      "id_estudiante": "SIM-09",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": 3.0,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 0,
+      "ingreso_hogar_smmlv": 3.0,
+      "estrato": 3,
+      "distancia_km": 6,
+      "solicita": "tutoria"
+    },
+    "por_que_es_dificil": "Promedio exactamente en el umbral 3.0."
+  },
+  {
+    "id": "S10",
+    "origen": "simulado",
+    "categoria": "extremo",
+    "entrada": {
+      "id_estudiante": "SIM-10",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": 3.9,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 1000000,
+      "ingreso_hogar_smmlv": 2.0,
+      "estrato": 3,
+      "distancia_km": 2,
+      "solicita": "financiero"
+    },
+    "por_que_es_dificil": "Ingreso exactamente en el umbral de 2 SMMLV."
+  },
+  {
+    "id": "S11",
+    "origen": "simulado",
+    "categoria": "extremo",
+    "entrada": {
+      "id_estudiante": "SIM-11",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": 4.0,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 1200000,
+      "ingreso_hogar_smmlv": 3.0,
+      "estrato": 3,
+      "distancia_km": 5.0,
+      "solicita": "financiero"
+    },
+    "por_que_es_dificil": "Distancia exactamente en el umbral de 5 km del bono de transporte."
+  },
+  {
+    "id": "S12",
+    "origen": "simulado",
+    "categoria": "fuera de rango",
+    "entrada": {
+      "id_estudiante": "SIM-12",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": 3.8,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 95000000,
+      "ingreso_hogar_smmlv": 1.0,
+      "estrato": 3,
+      "distancia_km": 6,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Saldo absurdo (error de digitación con ceros de más)."
+  },
+  {
+    "id": "S13",
+    "origen": "simulado",
+    "categoria": "tipo inválido",
+    "entrada": {
+      "id_estudiante": "SIM-13",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 4,
+      "promedio": "tres punto cinco",
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 1500000,
+      "ingreso_hogar_smmlv": 3.0,
+      "estrato": 3,
+      "distancia_km": 6,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Promedio escrito como texto desde un formulario libre."
+  },
+  {
+    "id": "S14",
+    "origen": "simulado",
+    "categoria": "fuera de rango",
+    "entrada": {
+      "id_estudiante": "SIM-14",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 14,
+      "promedio": 3.8,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 1500000,
+      "ingreso_hogar_smmlv": 3.0,
+      "estrato": 3,
+      "distancia_km": 6,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Semestre mayor al máximo del programa."
+  },
+  {
+    "id": "S15",
+    "origen": "simulado",
+    "categoria": "abstención/extremo",
+    "entrada": {
+      "id_estudiante": "SIM-15",
+      "nivel": "pregrado",
+      "matriculado": true,
+      "semestre": 1,
+      "promedio": null,
+      "materias_inscritas": 5,
+      "materias_perdidas": 0,
+      "saldo_pendiente": 1500000,
+      "ingreso_hogar_smmlv": 1.8,
+      "estrato": 2,
+      "distancia_km": 2,
+      "solicita": "ambos"
+    },
+    "por_que_es_dificil": "Primer semestre sin notas aún: el promedio vacío es legítimo, no un campo faltante."
+  }
+]
